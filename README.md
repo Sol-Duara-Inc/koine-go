@@ -10,4 +10,4 @@ from author code.
 transcribed semantics, the contract types, the amendments from the engine build, the
 open-decision ledger, and the build phases that become this repository's issues.
 
-Sol Duara internal. Private pending the owner's visibility ruling.
+KoineDSL is public — this is its Go rendering, and the what and why of the Sol Duara demo.
