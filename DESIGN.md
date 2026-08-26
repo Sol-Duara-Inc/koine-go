@@ -381,6 +381,16 @@ Registration judges in order and **refuses by name, storing nothing on refusal**
    (a blocked parent's derived budget is the max over sibling chains, the sum within each;
    detached chains excluded) applies with **no new arithmetic**.
 
+**Declared, never ambient (ruled 2026-08-26).** The owner, closing the trusted-tier question:
+teams *"would still have to require their trusted plugin by declaring it via the workflow."*
+The law is tier-blind: a station or plugin — compiled-in trusted or lodged quarantined —
+serves only where a workflow declares it. A loaded station with no declaring workflow
+receives nothing and routes nothing; presence in a deployment grants nothing. This is already
+the engine's shape (inquiry routing is keyed from the coordinate's own tool binding; reactions
+ride declared subscriptions), and the host protocol (K2) and consumption topology (K3) carry
+it as done-conditions: the expected graph is the routing table, and nothing routes that was
+not written before runtime.
+
 ## 8. The host below the line (engine-side, for context only)
 
 Host functions exposed to guests — the *entire* guest-visible surface: `deliver` (host→guest:
