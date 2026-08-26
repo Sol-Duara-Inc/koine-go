@@ -22,6 +22,12 @@ This ratifies Draft 1's escalation E-B (the module split) in stronger form: not 
 module in a shared tree but a separate repository, tracker, and release cadence. Vendors and
 customers import this SDK; they never import the engine.
 
+**Licensing (ruled 2026-08-26, owner verbatim):** *"AGPLv3 on anything public in our repos.
+That makes it clear that, for work in progress, you must disclose and share your changes. When
+it lands at the CDF, it needs to be hardened for Apache 2.0."* This repository is AGPL-3.0
+(`LICENSE` at the root) for the work-in-progress phase; the Apache-2.0 re-license happens at
+the CDF donation, as its own hardening pass.
+
 ---
 
 ## 1. Position
@@ -497,32 +503,46 @@ why (what the build proved), and what it buys. Nothing else in Draft 1 was alter
 
 ## 12. Escalations — the open-decision ledger
 
-Nothing here is resolved in code. Each row names its recommendation and exactly what it blocks.
-**E-A, E-B, and E-C are ratified** (the owner's 2026-08-26 rulings, quoted in their rows);
-E-D and E-E await one word each.
+Nothing here is resolved in code. Each row records its ruling. **ALL FIVE ARE RATIFIED**
+(2026-08-26, the owner's words quoted in their rows) — this ledger is closed and the document
+stands ratified.
 
-| id | decision | recommendation | blocks |
-|---|---|---|---|
-| E-A | Guest toolchain: standard Go's wasm output is large and goroutine-heavy for the sandbox; TinyGo is lean but restricts reflection (fine — codegen is reflection-free by A6) | **RATIFIED 2026-08-26** — TinyGo is the supported guest target ("I know that we are using TinyGo"); standard Go permitted for development | — |
-| E-B | Module split | **RATIFIED 2026-08-26** — separate repository, tracker, and issues | — |
-| E-C | `Value()` blocks the guest while the host brokers the exchange (single-threaded guest) | **RATIFIED 2026-08-26** — "the system must block on values that have not arrived"; async continuation styles stay deferred | — |
-| E-D | Delivery type assertion in author code vs a generic `Koine[D Delivery]` | core stays non-generic; generated typed wrappers keep the assertion out of author code | K0 (the `Koine` interface signature) |
-| E-E | Observer SDK surface: same module, or a trimmed observer-only module for wide distribution | same module for v1 | K0 (package layout) |
+| id | decision | ruling |
+|---|---|---|
+| E-A | Guest toolchain: standard Go's wasm output is large and goroutine-heavy for the sandbox; TinyGo is lean but restricts reflection (fine — codegen is reflection-free by A6) | **RATIFIED 2026-08-26, amended same day** — TinyGo is the supported guest target ("I know that we are using TinyGo") AND standard Go is expected to work: "my statement about it being present in TinyGo also means I expect it in Go." Both toolchains are supported build targets; the sandbox guest ships via TinyGo. |
+| E-B | Module split | **RATIFIED 2026-08-26** — separate repository, tracker, and issues |
+| E-C | `Value()` blocks the guest while the host brokers the exchange (single-threaded guest) | **RATIFIED 2026-08-26** — "the system must block on values that have not arrived." Acknowledged with it: "the blocking behavior can have weird side effects, but that is why this is a programmer's platform. You have to know how to program asynchronously." The platform does not protect authors from asynchrony; it is honest about it. |
+| E-D | Delivery type assertion in author code vs a generic `Koine[D Delivery]` | **RATIFIED 2026-08-26** — "I would prefer one uniform `[]Koine`": the core stays non-generic; generated typed adapters keep the assertion out of author code (the recommendation stands as ruled — "I prefer that you recommend here because you are writing the code"). |
+| E-E | Observer SDK surface: same module, or a trimmed observer-only module for wide distribution | **RATIFIED 2026-08-26** — one module. See the quarantine concession below. |
+
+**The quarantine concession (owner, 2026-08-26, verbatim):**
+
+> I am prepared to make concessions for a quarantined environment, as they can not carry every
+> Koine and have them all work properly; some will be gated. Because they are gated, there is
+> no danger in including them; it is just a weird programming experience, but an honest one.
+
+What this settles: the one-module answer survives the sandbox. A quarantined guest environment
+carries the full SDK surface even where deployment or plane gating leaves some Koine
+capabilities inert. Gated capabilities are ANNOUNCED, never trimmed at module level — the §7
+registration refusal names the seat, and the deployment's read surface answers in the
+three-state vocabulary. Inclusion is safe *because the gate is the enforcement* — a weird
+programming experience, and an honest one.
 
 ## 13. Build phases → the issue set
 
-Each phase below is written to become one GitHub issue in this repository, verbatim, when the
-owner ratifies this document. Every phase carries its own done-conditions and acceptance
+Each phase below is one GitHub issue in this repository (the document is ratified — the
+escalation ledger above is closed). Every phase carries its own done-conditions and acceptance
 commands; a phase is not done until its commands are green **with the named tests visibly run**
 (`go test -v -run <pattern>` must print `=== RUN` for each named test — an `ok` with no test
 names means the pattern matched nothing and proves nothing).
 
-### K0 — the contracts (blocked by: E-D, E-E)
+### K0 — the contracts
 
 **Objective:** `koine/`, `koine/selector/` compile and are exhaustively unit-tested; no host,
 no codegen, no wasm.
 
-**Done when:** the §4 types exist exactly as written (modulo E-D's ratified answer); the
+**Done when:** the §4 types exist exactly as written (E-D ruled: the plain non-generic core —
+typed adapters are K1's codegen, not K0's concern); the
 selector grammar covers typed selectors, anchors, `Resolved()` (either outcome — the resolved
 idiom), `Absent()`; `Contract` with `DefaultAllAwaited`; `Handle[T]` with `Received()`/
 `Value()`; `Detach`; the zero-dependency architecture test passes and FAILS when a third-party
@@ -530,7 +550,9 @@ import is added (prove once by adding one, watching it fail, removing it).
 
 **Acceptance:** `go build ./... && go vet ./...` clean; `gofmt -l .` empty;
 `go test -race -count=1 -v ./koine/... -run 'TestSelector_|TestContract_|TestHandle_|TestArch_StdlibOnly'`
-green with every name printed.
+green with every name printed. Per E-A as amended (both toolchains supported): a
+`internal/tinygocheck` main package importing `koine` and `koine/selector` compiles under
+TinyGo — `tinygo build -o /dev/null -target wasm-unknown ./internal/tinygocheck` exits 0.
 
 ### K1 — codegen (blocked by: K0)
 
@@ -548,7 +570,7 @@ identity, one await, its emits, and the `history.last` exchange as **inline**.
 **Acceptance:** `go test -race -count=1 -v ./cmd/koinegen/... -run 'TestGenerate_|TestManifest_'`
 green with names printed; `git diff --exit-code` after a full regeneration.
 
-### K2 — host protocol (engine-side; blocked by: K1, E-A)
+### K2 — host protocol (engine-side; blocked by: K1)
 
 **Objective:** `conduit-go/pkg/koinehost` — the guest loader and the five host functions
 (`deliver`, `yield`, `exchange`, `ack_poll`, `value_poll`), auto-emission around guest
@@ -565,7 +587,7 @@ forms and stores the emission; a guest trap surfaces as `work.finished{outcome: 
 the trap attributed; the guest demonstrably has no emit path but `yield` (a fixture guest that
 tries a second export path is refused at load, by name).
 
-### K3 — exchanges and branching (blocked by: K2, E-C)
+### K3 — exchanges and branching (blocked by: K2)
 
 **Objective:** handle beats end to end; consumption analysis enforced (inline / blocking /
 detached land as the three chain roles); `Detach` released from the completion gate;
@@ -588,6 +610,6 @@ proven by the gate on both sides.
 
 ---
 
-*Draft 2, for ratification. On the owner's word: E-D and E-E resolve (one line each), this
-document merges, and K0 files as the first issue. Findings that contradict this design are
+*Draft 2 — RATIFIED 2026-08-26: all five escalations ruled in the owner's words, the ledger
+closed, K0–K4 filed as this repository's issues. Findings that contradict this design are
 surfaced, not silently changed.*
