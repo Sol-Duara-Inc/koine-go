@@ -1,7 +1,8 @@
 # koine-go — the Go rendering of the Koine paradigm
 
-**Sol Duara internal. This repository is private; Draft 1's stealth note ("KoineDSL is never
-named externally") stands until the owner rules on visibility.**
+Draft 1's stealth note ("KoineDSL is never named externally") was retired by the owner on
+2026-08-26: *"KoineDSL has been public for some time. That is the what and why of our demo."*
+This repository carries no stealth constraint.
 
 **Status:** Draft 2 of the implementation design — 2026-08-26. Supersedes Draft 1 (2026-07-30,
 `conduit-go/docs/koinedsl_go_implementation_design.md`; its full text is preserved in that
@@ -497,14 +498,14 @@ why (what the build proved), and what it buys. Nothing else in Draft 1 was alter
 ## 12. Escalations — the open-decision ledger
 
 Nothing here is resolved in code. Each row names its recommendation and exactly what it blocks.
-**E-B is ratified** (the owner's 2026-08-26 ruling, quoted at the top); the other four await
-one word each.
+**E-A, E-B, and E-C are ratified** (the owner's 2026-08-26 rulings, quoted in their rows);
+E-D and E-E await one word each.
 
 | id | decision | recommendation | blocks |
 |---|---|---|---|
-| E-A | Guest toolchain: standard Go's wasm output is large and goroutine-heavy for the sandbox; TinyGo is lean but restricts reflection (fine — codegen is reflection-free by A6) | TinyGo as the supported guest target; standard Go permitted for development | K2 (the first guest actually loaded) |
+| E-A | Guest toolchain: standard Go's wasm output is large and goroutine-heavy for the sandbox; TinyGo is lean but restricts reflection (fine — codegen is reflection-free by A6) | **RATIFIED 2026-08-26** — TinyGo is the supported guest target ("I know that we are using TinyGo"); standard Go permitted for development | — |
 | E-B | Module split | **RATIFIED 2026-08-26** — separate repository, tracker, and issues | — |
-| E-C | `Value()` blocks the guest while the host brokers the exchange (single-threaded guest) | correct and simple for v1; async continuation styles deferred | K3 (handle semantics frozen) |
+| E-C | `Value()` blocks the guest while the host brokers the exchange (single-threaded guest) | **RATIFIED 2026-08-26** — "the system must block on values that have not arrived"; async continuation styles stay deferred | — |
 | E-D | Delivery type assertion in author code vs a generic `Koine[D Delivery]` | core stays non-generic; generated typed wrappers keep the assertion out of author code | K0 (the `Koine` interface signature) |
 | E-E | Observer SDK surface: same module, or a trimmed observer-only module for wide distribution | same module for v1 | K0 (package layout) |
 
@@ -587,6 +588,6 @@ proven by the gate on both sides.
 
 ---
 
-*Draft 2, for ratification. On the owner's word: E-A/C/D/E resolve (one line each), this
+*Draft 2, for ratification. On the owner's word: E-D and E-E resolve (one line each), this
 document merges, and K0 files as the first issue. Findings that contradict this design are
 surfaced, not silently changed.*
