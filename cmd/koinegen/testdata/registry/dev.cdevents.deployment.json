@@ -1,0 +1,85 @@
+{
+  "namespace": "dev.cdevents.deployment",
+  "package": "deployment",
+  "stratum": "floor",
+  "doc": "the community floor for deployment events — the stratum the design document's worked example stands on.",
+  "refs": [
+    {"name": "SubjectRef", "doc": "addresses the subject a deployment event is about."},
+    {"name": "ArtifactRef", "doc": "addresses a deployable artifact in the record."},
+    {"name": "EnvironmentRef", "doc": "addresses an environment a deployment targets."}
+  ],
+  "types": [
+    {
+      "name": "DeploymentFinished",
+      "event": "dev.cdevents.deployment.finished",
+      "doc": "is a deployment that reached a terminal state — either outcome. The resolved idiom delivers the completed thought and the body branches; the declaration never filters.",
+      "fields": [
+        {"name": "Subject", "json": "subject", "type": "ref:SubjectRef", "doc": ""},
+        {"name": "Outcome", "json": "outcome", "type": "outcome", "doc": ""},
+        {"name": "ArtifactID", "json": "artifactId", "type": "ref:ArtifactRef", "doc": ""},
+        {"name": "Environment", "json": "environment", "type": "ref:EnvironmentRef", "doc": ""}
+      ]
+    },
+    {
+      "name": "DeploymentRecorded",
+      "event": "dev.cdevents.deployment.recorded",
+      "doc": "says a deployment was taken into the record. Emitting it IS the storage action; there is no separate write.",
+      "fields": [
+        {"name": "Artifact", "json": "artifact", "type": "ref:ArtifactRef", "doc": ""}
+      ]
+    },
+    {
+      "name": "Deploy",
+      "event": "dev.cdevents.deployment.requested",
+      "doc": "asks for an artifact to be put on an environment. It is speech: whoever declared comprehension of it will hear it, and nobody else will.",
+      "fields": [
+        {"name": "Artifact", "json": "artifact", "type": "ref:ArtifactRef", "doc": ""},
+        {"name": "Target", "json": "target", "type": "ref:EnvironmentRef", "doc": ""}
+      ]
+    }
+  ],
+  "deliveries": [
+    {
+      "name": "ResolvedDelivery",
+      "of": "DeploymentFinished",
+      "doc": "is what a station awaiting the completed deployment thought is constructed with.",
+      "await": {"mode": "resolved", "type": "dev.cdevents.deployment", "anchor": "deploy"},
+      "verbs": [
+        {
+          "name": "History",
+          "seat": "history",
+          "tool": "record",
+          "connection": "record-query",
+          "permissions": ["record:read"],
+          "doc": "opens the seat that answers from the record. History is just another awaited shape: every past emission was already a write, so there is no query surface and no second convention.",
+          "intents": [
+            {
+              "name": "Last",
+              "exchange": "history.last",
+              "returns": "DeploymentFinished",
+              "doc": "asks the record for the most recent deployment that ended with the given outcome.",
+              "params": [{"name": "outcome", "type": "outcome"}]
+            }
+          ]
+        },
+        {
+          "name": "Ledger",
+          "seat": "ledger",
+          "tool": "ledger",
+          "connection": "append-only",
+          "permissions": ["ledger:append"],
+          "doc": "opens the seat that keeps the deployment ledger.",
+          "intents": [
+            {
+              "name": "Note",
+              "exchange": "ledger.note",
+              "returns": "DeploymentRecorded",
+              "doc": "asks the ledger to carry a note beside the deployment.",
+              "params": [{"name": "text", "type": "string"}]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

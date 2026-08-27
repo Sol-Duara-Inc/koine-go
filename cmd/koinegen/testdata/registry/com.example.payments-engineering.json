@@ -1,0 +1,27 @@
+{
+  "namespace": "com.example.payments-engineering",
+  "package": "payments",
+  "stratum": "customer",
+  "extends": "io.jenkins",
+  "doc": "the customer stratum: private keys on top of the vendor's extension. The vendor is not aware of it, and that confidentiality costs nothing to keep because it cannot be broken.",
+  "types": [
+    {
+      "name": "PaymentsBuildFinished",
+      "event": "dev.cdevents.build.finished",
+      "extends": "JenkinsBuildFinished",
+      "doc": "is a finished build as this customer speaks it, private keys included.",
+      "fields": [
+        {"name": "CostCenter", "json": "costCenter", "type": "string", "doc": ""},
+        {"name": "PCIScope", "json": "pciScope", "type": "bool", "doc": ""}
+      ]
+    }
+  ],
+  "deliveries": [
+    {
+      "name": "FinishedDelivery",
+      "of": "PaymentsBuildFinished",
+      "doc": "is what a CUSTOMER station is constructed with when a build finishes.",
+      "await": {"mode": "event", "type": "dev.cdevents.build.finished", "anchor": "build"}
+    }
+  ]
+}
