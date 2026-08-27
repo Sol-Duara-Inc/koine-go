@@ -156,7 +156,7 @@ func (g *generator) writeVerb(b *strings.Builder, ns *Namespace, v *Verb) {
 		for _, p := range in.Params {
 			params = append(params, paramName(p.Name)+" "+g.goType(ns, p.Type, ns))
 		}
-		comment(b, in.Name+" "+in.Doc, "It speaks "+strconv.Quote(in.Exchange)+" — an intent, uttered at the call. How you use the handle IS the branch control: Value() consumed is inline, spoken and never consumed is concurrent, koine.Detach is detached.")
+		comment(b, in.Name+" "+in.Doc, "It speaks "+strconv.Quote(in.Exchange)+" — an intent, uttered at the call. How you use the handle IS the branch control: Value() consumed is inline, spoken and never consumed is concurrent.")
 		fmt.Fprintf(b, "func (v %s) %s(%s) koine.Handle[%s] {\n", name, in.Name, strings.Join(params, ", "), in.ReturnType().Name)
 		fmt.Fprintf(b, "\th := &%s{\n\t\tbroker: v.broker,\n\t\texchange: koine.Exchange{\n", handleTypeName(in.ReturnType()))
 		fmt.Fprintf(b, "\t\t\tSeat: %q,\n\t\t\tName: %q,\n", v.Seat, in.Exchange)
@@ -205,9 +205,6 @@ func (g *generator) writeHandle(b *strings.Builder, t *Type) {
 
 	comment(b, "Received is the fast beat: someone who declared comprehension has this now.")
 	fmt.Fprintf(b, "func (h *%s) Received() koine.Ack {\n\th.speak()\n\treturn koine.Ack{By: h.answer.By}\n}\n\n", name)
-
-	comment(b, "MarkDetached fills koine.Detachable, so a written koine.Detach is a spoken one: the host below the handle is told the exchange was released from this station's completion gate. Divergence is loud in both readings — the source the analyzer reads and the beat a run witnesses.")
-	fmt.Fprintf(b, "func (h *%s) MarkDetached() {\n\th.speak()\n\th.broker.Detached(h.exchange)\n}\n\n", name)
 
 	comment(b, "Value gates on completion and materializes the answer. The error is the typed outcome variant of the expected response, never transport — branch on it, don't defend against it.")
 	fmt.Fprintf(b, "func (h *%s) Value() (%s, error) {\n", name, t.Name)

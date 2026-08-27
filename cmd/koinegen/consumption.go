@@ -13,16 +13,15 @@ import (
 )
 
 // Consumption is read from usage, exactly as §6 says it compiles from usage.
-// The three patterns are not three APIs; they are three ways of treating one
+// The two patterns are not two APIs; they are two ways of treating one
 // handle:
 //
 //   - Value() reached on the handle          → inline
-//   - koine.Detach reached on the handle     → detached
 //   - neither                                → concurrent, the default
 //
 // Concurrent is the default because silence must never mean "ungated". A
 // station that speaks and walks away has still gated its own completion on
-// the answer; only a written Detach releases it.
+// the answer.
 //
 // WHERE THE READING CANNOT BE CERTAIN, THE STATION IS REFUSED BY NAME. That
 // is this repository's own law (A9: everything validates or is refused), and
@@ -30,9 +29,8 @@ import (
 // coordinates and budget from, so a guess that lands in one is worse than no
 // manifest at all. The analyzer therefore follows each handle through its
 // binding — honouring how many times the name is written and every place it
-// is read — and refuses reassignment, shadowing, a handle or a seat or the
-// delivery handed to something it cannot follow, and the contradiction of
-// consuming and detaching the same exchange.
+// is read — and refuses reassignment, shadowing, and a handle or a seat or
+// the delivery handed to something it cannot follow.
 
 // body is one Resolve, read whole: the tree, the parent of every node in it,
 // and every position that binds a name.
@@ -439,13 +437,6 @@ func (x *extractor) consumption(b *body, c spokenCall) (manifest.Consumption, er
 			return manifest.Concurrent, nil
 		}
 
-	case *ast.CallExpr:
-		// The handle is handed straight to something. Detach is the only
-		// something this analyzer knows.
-		if x.isDetachCall(p) && callTakes(p, c.node) {
-			return manifest.Detached, nil
-		}
-
 	case *ast.AssignStmt, *ast.ValueSpec:
 		name := boundName(p, c.node)
 		if name == "" {
@@ -454,7 +445,7 @@ func (x *extractor) consumption(b *body, c spokenCall) (manifest.Consumption, er
 		}
 		return x.followHandle(b, c, name)
 	}
-	return "", b.refuse("speaks %s and hands the handle to %s — consume it with Value(), gate on Received(), or release it with koine.Detach, in this body. A manifest the analyzer had to guess at is a declaration that could lie about the code.",
+	return "", b.refuse("speaks %s and hands the handle to %s — consume it with Value() or gate on Received(), in this body. A manifest the analyzer had to guess at is a declaration that could lie about the code.",
 		strconv.Quote(c.intent.Exchange), x.enclosing(b, c.node))
 }
 
@@ -467,15 +458,11 @@ func (x *extractor) followHandle(b *body, c spokenCall, name string) (manifest.C
 		return "", b.refuse("binds %q %d times — the analyzer follows one handle per name, and a reassigned name would make %s inherit another handle's consumption. Give each handle its own name.",
 			name, len(b.writes[name]), strconv.Quote(c.intent.Exchange))
 	}
-	consumed, detached := false, false
+	consumed := false
 	for _, id := range b.readsOf(name) {
-		if call, ok := b.parents[id].(*ast.CallExpr); ok && x.isDetachCall(call) && callTakes(call, id) {
-			detached = true
-			continue
-		}
 		sel, ok := b.parents[id].(*ast.SelectorExpr)
 		if !ok || sel.X != ast.Expr(id) || !isCallee(b, sel) {
-			return "", b.refuse("hands the handle %q to %s — consume it with Value(), gate on Received(), or release it with koine.Detach, in this body.", name, x.enclosing(b, id))
+			return "", b.refuse("hands the handle %q to %s — consume it with Value() or gate on Received(), in this body.", name, x.enclosing(b, id))
 		}
 		switch sel.Sel.Name {
 		case "Value":
@@ -485,43 +472,10 @@ func (x *extractor) followHandle(b *body, c spokenCall, name string) (manifest.C
 			return "", b.refuse("reaches %s.%s, which is not part of the Handle contract.", name, sel.Sel.Name)
 		}
 	}
-	switch {
-	case consumed && detached:
-		return "", b.refuse("both consumes and detaches %q — inline and detached are different chain roles, and a station declares one or the other.", name)
-	case consumed:
+	if consumed {
 		return manifest.Inline, nil
-	case detached:
-		return manifest.Detached, nil
 	}
 	return manifest.Concurrent, nil
-}
-
-// isDetachCall recognises koine.Detach in both its spellings, inferred and
-// explicit.
-func (x *extractor) isDetachCall(call *ast.CallExpr) bool {
-	fun := call.Fun
-	switch idx := fun.(type) {
-	case *ast.IndexExpr:
-		fun = idx.X
-	case *ast.IndexListExpr:
-		fun = idx.X
-	}
-	sel, ok := fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Detach" {
-		return false
-	}
-	pkg, ok := sel.X.(*ast.Ident)
-	return ok && pkg.Name == x.koineLocal
-}
-
-// callTakes reports whether node is one of the call's arguments.
-func callTakes(call *ast.CallExpr, node ast.Node) bool {
-	for _, arg := range call.Args {
-		if ast.Node(arg) == node {
-			return true
-		}
-	}
-	return false
 }
 
 // boundName is the identifier a binding statement gave to node.

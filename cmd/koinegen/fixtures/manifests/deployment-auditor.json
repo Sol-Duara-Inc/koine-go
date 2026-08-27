@@ -46,16 +46,6 @@
         "permissions": [
           "record:read"
         ]
-      },
-      {
-        "seat": "ledger",
-        "name": "ledger.note",
-        "consumption": "detached",
-        "chainRole": "detached",
-        "returns": "dev.cdevents.deployment.recorded",
-        "permissions": [
-          "ledger:append"
-        ]
       }
     ],
     "seats": [
@@ -65,14 +55,6 @@
         "connection": "record-query",
         "permissions": [
           "record:read"
-        ]
-      },
-      {
-        "seat": "ledger",
-        "tool": "ledger",
-        "connection": "append-only",
-        "permissions": [
-          "ledger:append"
         ]
       }
     ]

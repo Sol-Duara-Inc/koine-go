@@ -97,23 +97,6 @@ func TestContract_DefaultAllAwaitedIsTheZeroContract(t *testing.T) {
 	}
 }
 
-type fakeHandle struct{ v int }
-
-func (f fakeHandle) Received() koine.Ack { return koine.Ack{By: "human:test"} }
-func (f fakeHandle) Value() (int, error) { return f.v, nil }
-
-func TestHandle_DetachAcceptsAnyHandle(t *testing.T) {
-	var h koine.Handle[int] = fakeHandle{v: 7}
-	koine.Detach(h)                     // inferred from the interface value
-	koine.Detach[int](fakeHandle{v: 7}) // explicit, straight from a concrete type
-	if got, err := h.Value(); err != nil || got != 7 {
-		t.Fatalf("Value = %d, %v", got, err)
-	}
-	if h.Received().By != "human:test" {
-		t.Fatal("Received lost the comprehender")
-	}
-}
-
 func TestExecution_ChainVerbsAreLoudWithoutHost(t *testing.T) {
 	defer func() {
 		r := recover()

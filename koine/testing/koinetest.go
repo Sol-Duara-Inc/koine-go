@@ -51,11 +51,10 @@ type Out struct {
 	Exchanges []Spoken
 
 	// Consumption is how each exchange was treated, by exchange name.
-	// All three patterns are witnessed, not inferred: Value() reports
-	// itself through the broker, and so does koine.Detach (ruled
-	// 2026-08-27). A run and the manifest koinegen derived can therefore
-	// be compared word for word, which is what makes A3 a gate rather
-	// than a gesture.
+	// Both patterns are witnessed, not inferred: Value() reports itself
+	// through the broker. A run and the manifest koinegen derived can
+	// therefore be compared word for word, which is what makes A3 a gate
+	// rather than a gesture.
 	Consumption map[string]manifest.Consumption
 }
 
@@ -181,16 +180,6 @@ func (r *run) Speak(ex koine.Exchange) koine.Answer {
 func (r *run) Consumed(ex koine.Exchange) {
 	if s := r.byName[ex.Name]; s != nil {
 		s.Consumption = manifest.Inline
-	}
-}
-
-// Detached records that koine.Detach was spoken over this exchange's handle,
-// releasing it from the station's completion gate. Consuming a value is the
-// stronger statement, so a body that somehow did both reads as inline — and
-// koinegen refuses that contradiction outright, before anything runs.
-func (r *run) Detached(ex koine.Exchange) {
-	if s := r.byName[ex.Name]; s != nil && s.Consumption != manifest.Inline {
-		s.Consumption = manifest.Detached
 	}
 }
 

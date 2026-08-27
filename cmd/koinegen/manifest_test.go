@@ -86,9 +86,12 @@ func TestManifest_WorkedExampleNamesItsIdentityAwaitEmitsAndInlineExchange(t *te
 	}
 }
 
-// TestManifest_ConsumptionTopologyIsTheChainRoles pins A4: the three
-// consumption patterns ARE the three chain roles the engine's stored
-// expected graph admits, and nothing else is admitted.
+// TestManifest_ConsumptionTopologyIsTheChainRoles pins A4: the two
+// consumption patterns a station's own body can produce ARE two of the
+// chain roles the engine's stored expected graph admits. A third role is
+// minted from a workflow's own topology declaration and is never produced
+// by a station's consumption (DESIGN.md §6, amended 2026-08-27, issue #11)
+// — so it is not tested here.
 func TestManifest_ConsumptionTopologyIsTheChainRoles(t *testing.T) {
 	found := extractFixtures(t)
 	roles := map[manifest.Consumption]string{}
@@ -100,7 +103,6 @@ func TestManifest_ConsumptionTopologyIsTheChainRoles(t *testing.T) {
 	want := map[manifest.Consumption]string{
 		manifest.Inline:     "main",
 		manifest.Concurrent: "blocking",
-		manifest.Detached:   "detached",
 	}
 	for how, role := range want {
 		got, ok := roles[how]
@@ -112,22 +114,19 @@ func TestManifest_ConsumptionTopologyIsTheChainRoles(t *testing.T) {
 			t.Errorf("%q maps to chain role %q, want %q", how, got, role)
 		}
 	}
-	if len(roles) != 3 {
-		t.Errorf("the fixtures produced %d consumption patterns, want exactly the three roles", len(roles))
+	if len(roles) != 2 {
+		t.Errorf("the fixtures produced %d consumption patterns, want exactly the two roles", len(roles))
 	}
 
 	auditor := found["DeploymentAuditor"]
 	if auditor.Koine.Stratum != "execution" {
 		t.Errorf("the auditor embeds ExecutionBase; stratum = %q", auditor.Koine.Stratum)
 	}
-	if len(auditor.Koine.Exchanges) != 2 {
-		t.Fatalf("the auditor speaks %d exchanges, want two", len(auditor.Koine.Exchanges))
+	if len(auditor.Koine.Exchanges) != 1 {
+		t.Fatalf("the auditor speaks %d exchanges, want one", len(auditor.Koine.Exchanges))
 	}
 	if auditor.Koine.Exchanges[0].Name != "history.last" || auditor.Koine.Exchanges[0].Consumption != manifest.Concurrent {
 		t.Errorf("spoken-and-never-consumed must be concurrent: %#v", auditor.Koine.Exchanges[0])
-	}
-	if auditor.Koine.Exchanges[1].Name != "ledger.note" || auditor.Koine.Exchanges[1].Consumption != manifest.Detached {
-		t.Errorf("koine.Detach must be detached: %#v", auditor.Koine.Exchanges[1])
 	}
 }
 
@@ -395,21 +394,6 @@ func TestManifest_ConsumptionFollowsTheHandleThroughItsBinding(t *testing.T) {
 			want: manifest.Concurrent, role: "blocking",
 		},
 		{
-			name: "bound and released",
-			body: "\th := dep.History().Last(koine.Success)\n\tkoine.Detach(h)",
-			want: manifest.Detached, role: "detached",
-		},
-		{
-			name: "released without ever being named",
-			body: "\tkoine.Detach(dep.History().Last(koine.Success))",
-			want: manifest.Detached, role: "detached",
-		},
-		{
-			name: "released with the type written out",
-			body: "\th := dep.History().Last(koine.Success)\n\tkoine.Detach[deployment.DeploymentFinished](h)",
-			want: manifest.Detached, role: "detached",
-		},
-		{
 			name: "spoken through a bound seat",
 			body: "\tseat := dep.History()\n\t_, _ = seat.Last(koine.Success).Value()",
 			want: manifest.Inline, role: "main",
@@ -451,22 +435,17 @@ func TestManifest_RefusesWhatItCannotReadWithCertainty(t *testing.T) {
 	}{
 		{
 			name: "a handle name reused for a second handle",
-			body: "\th := dep.Ledger().Note(\"released, on purpose\")\n" +
-				"\tkoine.Detach(h)\n" +
+			body: "\th := dep.Ledger().Note(\"consumed, on purpose\")\n" +
+				"\t_, _ = h.Value()\n" +
 				"\th = dep.Ledger().Note(\"gated, on purpose\")\n\t_ = h",
 			wantIn: `binds "h" 2 times`,
 		},
 		{
 			name: "a handle shadowed in an inner scope",
 			body: "\th := dep.History().Last(koine.Success)\n" +
-				"\tkoine.Detach(h)\n" +
+				"\t_, _ = h.Value()\n" +
 				"\tif dep.Outcome == koine.Failure {\n\t\th := dep.Ledger().Note(\"inner\")\n\t\t_ = h\n\t}",
 			wantIn: `binds "h" 2 times`,
-		},
-		{
-			name:   "a handle both consumed and released",
-			body:   "\th := dep.History().Last(koine.Success)\n\t_, _ = h.Value()\n\tkoine.Detach(h)",
-			wantIn: "both consumes and detaches",
 		},
 		{
 			name:   "a handle handed to a helper",

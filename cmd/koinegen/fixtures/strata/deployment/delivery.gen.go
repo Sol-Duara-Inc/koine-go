@@ -143,7 +143,7 @@ type HistorySeat struct{ broker koine.Broker }
 //
 // It speaks "history.last" — an intent, uttered at the call. How you use
 // the handle IS the branch control: Value() consumed is inline, spoken and
-// never consumed is concurrent, koine.Detach is detached.
+// never consumed is concurrent.
 func (v HistorySeat) Last(outcome koine.Outcome) koine.Handle[DeploymentFinished] {
 	h := &handleDeploymentFinished{
 		broker: v.broker,
@@ -169,7 +169,7 @@ type LedgerSeat struct{ broker koine.Broker }
 //
 // It speaks "ledger.note" — an intent, uttered at the call. How you use
 // the handle IS the branch control: Value() consumed is inline, spoken and
-// never consumed is concurrent, koine.Detach is detached.
+// never consumed is concurrent.
 func (v LedgerSeat) Note(text string) koine.Handle[DeploymentRecorded] {
 	h := &handleDeploymentRecorded{
 		broker: v.broker,
@@ -211,15 +211,6 @@ func (h *handleDeploymentFinished) speak() {
 func (h *handleDeploymentFinished) Received() koine.Ack {
 	h.speak()
 	return koine.Ack{By: h.answer.By}
-}
-
-// MarkDetached fills koine.Detachable, so a written koine.Detach is a spoken
-// one: the host below the handle is told the exchange was released from this
-// station's completion gate. Divergence is loud in both readings — the
-// source the analyzer reads and the beat a run witnesses.
-func (h *handleDeploymentFinished) MarkDetached() {
-	h.speak()
-	h.broker.Detached(h.exchange)
 }
 
 // Value gates on completion and materializes the answer. The error is the
@@ -267,15 +258,6 @@ func (h *handleDeploymentRecorded) speak() {
 func (h *handleDeploymentRecorded) Received() koine.Ack {
 	h.speak()
 	return koine.Ack{By: h.answer.By}
-}
-
-// MarkDetached fills koine.Detachable, so a written koine.Detach is a spoken
-// one: the host below the handle is told the exchange was released from this
-// station's completion gate. Divergence is loud in both readings — the
-// source the analyzer reads and the beat a run witnesses.
-func (h *handleDeploymentRecorded) MarkDetached() {
-	h.speak()
-	h.broker.Detached(h.exchange)
 }
 
 // Value gates on completion and materializes the answer. The error is the

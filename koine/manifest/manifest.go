@@ -25,6 +25,14 @@ const SchemaVersion = "koine.manifest/1"
 
 // Consumption is how a station consumed a handle it spoke — which IS the
 // chain role the exchange takes in the engine's stored expected graph (A4).
+//
+// A station's own consumption produces exactly two patterns. A third chain
+// role exists in the engine's stored expected graph, but it is minted from a
+// workflow's own topology declaration — never from a station's Resolve.
+// This vocabulary was narrowed to the two below 2026-08-27 (DESIGN.md §6,
+// issue #11): a station author was never the one who owned that third fact,
+// and naming it here dressed a topology statement up as a statement about
+// waiting, which it never was.
 type Consumption string
 
 const (
@@ -35,21 +43,18 @@ const (
 	// completion gates on the exchange's resolution. The default —
 	// nothing is silently ungated.
 	Concurrent Consumption = "concurrent"
-	// Detached: koine.Detach was spoken over the handle, in code, under
-	// the author's name; the exchange is released from the gate.
-	Detached Consumption = "detached"
 )
 
-// ChainRole is the engine-side name of the same fact: the only three roles
-// its stored expected graph admits.
+// ChainRole is the engine-side name of the same fact: the two roles a
+// station's own consumption can ever produce, out of the three its stored
+// expected graph admits (the third is workflow topology — see the
+// Consumption doc comment).
 func (c Consumption) ChainRole() string {
 	switch c {
 	case Inline:
 		return "main"
 	case Concurrent:
 		return "blocking"
-	case Detached:
-		return "detached"
 	}
 	return ""
 }

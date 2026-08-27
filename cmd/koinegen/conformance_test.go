@@ -18,10 +18,10 @@ import (
 // touched. Every path of every fixture station is driven below, so the two
 // readings cover each other completely.
 //
-// All three chain roles are compared word for word. Until 2026-08-27 the
-// third was invisible to a run — koine.Detach was read from source and
-// nowhere else, so a wrong "detached" could pass this gate. Detach now tells
-// the host below the handle as well, and the comparison below is exact.
+// Both chain roles a station's own consumption can produce — inline and
+// concurrent — are compared word for word. A third pattern lived in this
+// vocabulary through Draft 2; it named a topology fact that was never a
+// station's to declare, and was struck 2026-08-27 (DESIGN.md §6, issue #11).
 
 // behaviour is one driven path and what it turned out to say.
 type behaviour struct {
@@ -74,8 +74,7 @@ func drivenPaths(t *testing.T) map[string][]behaviour {
 				station: station.DeploymentAuditor{},
 				out: koinetest.Run(station.DeploymentAuditor{},
 					koinetest.Deliver(failed),
-					koinetest.Exchange("history.last", lastGood),
-					koinetest.Exchange("ledger.note", noted)),
+					koinetest.Exchange("history.last", lastGood)),
 			},
 		},
 		// The rehearsal binds its handle and its seat before speaking
@@ -194,11 +193,10 @@ func TestManifest_ExtractorMatchesBehaviour(t *testing.T) {
 		}
 	}
 
-	// And the gate can tell all three roles apart. A comparison that
-	// collapsed two of them would pass every assertion above while letting
-	// a wrong word through — which is exactly what it did until Detach
-	// began telling the host as well as the analyzer.
-	for _, how := range []manifest.Consumption{manifest.Inline, manifest.Concurrent, manifest.Detached} {
+	// And the gate can tell both roles apart. A comparison that collapsed
+	// them would pass every assertion above while letting a wrong word
+	// through.
+	for _, how := range []manifest.Consumption{manifest.Inline, manifest.Concurrent} {
 		if !witnessed[how] {
 			t.Errorf("no driven path ever WITNESSED %q — the gate cannot catch a manifest that claims it", how)
 		}

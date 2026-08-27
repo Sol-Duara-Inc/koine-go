@@ -7,10 +7,9 @@ import (
 )
 
 // DeploymentAuditor stands at the executing stratum and exists to pin the
-// two consumption patterns the steward does not use. Both are written here
-// the way an author writes them — one by silence, one by declaration — so
-// the extractor is read against real usage rather than a fixture posed for
-// it.
+// concurrent pattern the steward does not use, written the way an author
+// writes it — by silence, unbound and walked away from — so the extractor
+// is read against real usage rather than a fixture posed for it.
 type DeploymentAuditor struct{ koine.ExecutionBase }
 
 // Identity is the claim this station carries.
@@ -27,7 +26,7 @@ func (DeploymentAuditor) Awaits() []selector.Selector {
 // Complete is the default shape of complete.
 func (DeploymentAuditor) Complete() koine.Contract { return koine.DefaultAllAwaited }
 
-// Resolve speaks two exchanges and consumes neither.
+// Resolve speaks one exchange and consumes it not at all.
 func (a DeploymentAuditor) Resolve(d koine.Delivery, yield koine.Yield) {
 	dep := d.(deployment.ResolvedDelivery)
 
@@ -35,11 +34,6 @@ func (a DeploymentAuditor) Resolve(d koine.Delivery, yield koine.Yield) {
 	// completion gates on the exchange resolving. Nothing is silently
 	// ungated — the silence IS the gate.
 	dep.History().Last(koine.Failure)
-
-	// Detached, by declaration: released from the gate in code, under this
-	// author's name, in the blame.
-	note := dep.Ledger().Note("audited " + string(dep.ArtifactID))
-	koine.Detach(note)
 
 	yield(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
 }

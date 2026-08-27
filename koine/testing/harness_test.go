@@ -127,42 +127,33 @@ func TestHarness_TheTypedVariantIsBranchedOnNotDefendedAgainst(t *testing.T) {
 	}
 }
 
-// TestHarness_AllThreeConsumptionPatternsAreWitnessed pins the third chain
-// role now that koine.Detach tells the host below the handle as well as the
-// analyzer reading the source (ruled 2026-08-27). The auditor speaks one
-// exchange it never consumes and one it releases, and a run can tell them
-// apart — which is what lets the conformance gate compare the manifest word
-// for word instead of through a collapse.
-func TestHarness_AllThreeConsumptionPatternsAreWitnessed(t *testing.T) {
+// TestHarness_BothConsumptionPatternsAreWitnessed pins that a run can tell
+// the two chain roles a station's own consumption can produce apart — which
+// is what lets the conformance gate compare the manifest word for word
+// instead of through a collapse. A third pattern, naming a workflow-owned
+// topology fact rather than anything a station author waits on, lived here
+// through Draft 2 and was struck 2026-08-27 (DESIGN.md §6, issue #11).
+func TestHarness_BothConsumptionPatternsAreWitnessed(t *testing.T) {
 	out := koinetest.Run(station.DeploymentAuditor{},
 		koinetest.Deliver(deployment.ResolvedDelivery{
 			Outcome:     koine.Failure,
 			ArtifactID:  "sha256:bad",
 			Environment: "prod",
 		}),
-		koinetest.Exchange("history.last", lastGood),
-		koinetest.Exchange("ledger.note", deployment.SeedDeploymentRecorded("sha256:bad")))
+		koinetest.Exchange("history.last", lastGood))
 
-	if len(out.Exchanges) != 2 {
-		t.Fatalf("the auditor spoke %d exchanges, want two", len(out.Exchanges))
+	if len(out.Exchanges) != 1 {
+		t.Fatalf("the auditor spoke %d exchanges, want one", len(out.Exchanges))
 	}
-	want := map[string]manifest.Consumption{
-		"history.last": manifest.Concurrent, // spoken, never consumed — the gate stands
-		"ledger.note":  manifest.Detached,   // released, in code, under the author's name
+	if out.Consumption["history.last"] != manifest.Concurrent {
+		t.Errorf("spoken, never consumed — the gate stands: observed as %q", out.Consumption["history.last"])
 	}
-	for name, how := range want {
-		if out.Consumption[name] != how {
-			t.Errorf("%s observed as %q, want %q", name, out.Consumption[name], how)
-		}
-	}
-	for _, ex := range out.Exchanges {
-		if ex.Consumption != want[ex.Name] {
-			t.Errorf("%s: Spoken says %q, want %q", ex.Name, ex.Consumption, want[ex.Name])
-		}
+	if out.Exchanges[0].Consumption != manifest.Concurrent {
+		t.Errorf("history.last: Spoken says %q, want %q", out.Exchanges[0].Consumption, manifest.Concurrent)
 	}
 
-	// And the steward's inline reading is still its own thing, so the three
-	// roles are three and not two wearing one name.
+	// And the steward's inline reading is still its own thing, so the two
+	// roles are two and not one wearing two names.
 	inline := koinetest.Run(station.DeploymentSteward{},
 		koinetest.Deliver(deployment.ResolvedDelivery{Outcome: koine.Failure, ArtifactID: "sha256:bad"}),
 		koinetest.Exchange("history.last", lastGood))
@@ -195,7 +186,6 @@ func TestHarness_ARefusedYieldStopsResolution(t *testing.T) {
 	out := koinetest.Run(station.DeploymentAuditor{},
 		koinetest.Deliver(deployment.ResolvedDelivery{Outcome: koine.Failure, ArtifactID: "sha256:bad"}),
 		koinetest.Exchange("history.last", lastGood),
-		koinetest.Exchange("ledger.note", deployment.SeedDeploymentRecorded("sha256:bad")),
 		koinetest.StopAfter(0))
 
 	if len(out.Utterances) != 0 {

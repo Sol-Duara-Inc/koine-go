@@ -1,8 +1,8 @@
 package koine
 
 // This file is the host seam for §6's spoken exchanges. It adds nothing to
-// §4's contract types and changes none of them: Handle, Detach, Ack and
-// Outcome are exactly as K0 ratified them. What lands here is the shape a
+// §4's contract types and changes none of them: Handle, Ack and Outcome are
+// exactly as K0 ratified them. What lands here is the shape a
 // generated verb speaks through and the shape whoever stands below the
 // station answers with — the host in a deployment, koine/testing under a
 // test. A station body holds none of these types; it holds a Handle.
@@ -46,16 +46,9 @@ type Answer struct {
 // host already knows this statically, from the manifest koinegen derived;
 // hearing it again at run time is what lets a conformance test prove the
 // declaration and the body agree (A3).
-//
-// Detached is the same beat for the other divergence: koine.Detach was
-// spoken over the handle, releasing the exchange from the station's
-// completion gate. Both beats exist so a run can witness the topology the
-// manifest declares statically, rather than the gate having to take the
-// manifest's word for it.
 type Broker interface {
 	Speak(Exchange) Answer
 	Consumed(Exchange)
-	Detached(Exchange)
 }
 
 // Bindable is a generated delivery that can be wired to the broker standing
