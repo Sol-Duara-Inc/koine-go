@@ -39,9 +39,15 @@ type Detachable interface {
 // your source, which is what puts the detached chain role in the manifest
 // before anything runs; and the call also tells the host below the handle,
 // so a pure-Resolve run can WITNESS the release instead of inferring it.
-// Ruled 2026-08-27, closing the third chain role: a declaration the
-// conformance gate cannot see is a declaration the gate cannot pin, and A3
-// is an absolute or it is nothing.
+// Raised in review 2026-08-27 and AWAITING THE OWNER'S WORD — recorded this
+// way on purpose: "ruled" in this file has meant the owner ruled it, and a
+// review finding does not get to borrow that. The reasoning is that a
+// declaration the conformance gate cannot see is a declaration the gate
+// cannot pin, and A3 is an absolute or it is nothing; §6 as ratified says
+// "detached, by declaration, in code, under the author's name" and does not
+// require this call to be inert, so nothing here contradicts it. If the
+// owner rules otherwise, the body below goes back to empty and the manifest
+// remains the only reader.
 //
 // A handle that is not a generated one — a hand-written double in a test —
 // has no host to tell, and Detach stays the no-op it always was.
