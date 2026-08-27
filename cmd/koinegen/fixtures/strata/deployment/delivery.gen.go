@@ -213,6 +213,15 @@ func (h *handleDeploymentFinished) Received() koine.Ack {
 	return koine.Ack{By: h.answer.By}
 }
 
+// MarkDetached fills koine.Detachable, so a written koine.Detach is a spoken
+// one: the host below the handle is told the exchange was released from this
+// station's completion gate. Divergence is loud in both readings — the
+// source the analyzer reads and the beat a run witnesses.
+func (h *handleDeploymentFinished) MarkDetached() {
+	h.speak()
+	h.broker.Detached(h.exchange)
+}
+
 // Value gates on completion and materializes the answer. The error is the
 // typed outcome variant of the expected response, never transport — branch
 // on it, don't defend against it.
@@ -258,6 +267,15 @@ func (h *handleDeploymentRecorded) speak() {
 func (h *handleDeploymentRecorded) Received() koine.Ack {
 	h.speak()
 	return koine.Ack{By: h.answer.By}
+}
+
+// MarkDetached fills koine.Detachable, so a written koine.Detach is a spoken
+// one: the host below the handle is told the exchange was released from this
+// station's completion gate. Divergence is loud in both readings — the
+// source the analyzer reads and the beat a run witnesses.
+func (h *handleDeploymentRecorded) MarkDetached() {
+	h.speak()
+	h.broker.Detached(h.exchange)
 }
 
 // Value gates on completion and materializes the answer. The error is the

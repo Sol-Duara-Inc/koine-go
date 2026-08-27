@@ -448,16 +448,16 @@ func (x *extractor) resolveBody(station string, fn *ast.FuncDecl) (resolved, err
 	if len(fn.Type.Params.List) != 2 {
 		return out, fmt.Errorf("koinegen manifest: %s.Resolve does not take (koine.Delivery, koine.Yield)", station)
 	}
-	yieldName := ""
-	if names := fn.Type.Params.List[1].Names; len(names) == 1 {
-		yieldName = names[0].Name
-	}
-
 	delivery, ns, err := x.delivery(station, fn)
 	if err != nil {
 		return out, err
 	}
 	out.lineage = ns.Lineage()
+
+	b, err := x.newBody(station, fn, delivery)
+	if err != nil {
+		return out, err
+	}
 
 	seen := map[string]bool{}
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -465,8 +465,12 @@ func (x *extractor) resolveBody(station string, fn *ast.FuncDecl) (resolved, err
 		if !ok {
 			return true
 		}
-		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == yieldName && len(call.Args) == 1 {
-			if emit, ok := x.emit(call.Args[0]); ok && !seen[emit.Go] {
+		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == b.yieldParam && len(call.Args) == 1 {
+			emit, ok := x.emit(call.Args[0])
+			if !ok {
+				return true
+			}
+			if !seen[emit.Go] {
 				seen[emit.Go] = true
 				out.emits = append(out.emits, emit)
 			}
@@ -477,7 +481,7 @@ func (x *extractor) resolveBody(station string, fn *ast.FuncDecl) (resolved, err
 		return out, fmt.Errorf("koinegen manifest: %s.Resolve yields nothing — a station that never speaks has no reason to be awaited", station)
 	}
 
-	spoken, err := x.spoken(station, fn, delivery)
+	spoken, err := x.spoken(b)
 	if err != nil {
 		return out, err
 	}

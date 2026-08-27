@@ -54,19 +54,6 @@ func (c Consumption) ChainRole() string {
 	return ""
 }
 
-// Observable is what a pure-Resolve run can witness. Detach is a
-// DECLARATION, not an action (§6): the analyzer reads it from the source,
-// and at run time a detached handle and a merely unconsumed one are the same
-// object doing the same nothing. The harness therefore reports Concurrent
-// for both, and the conformance test compares through this function rather
-// than pretending a run can see a word that was only written.
-func (c Consumption) Observable() Consumption {
-	if c == Detached {
-		return Concurrent
-	}
-	return c
-}
-
 // Manifest is one station's registration, derived from its code.
 type Manifest struct {
 	SchemaVersion string      `json:"schemaVersion"`

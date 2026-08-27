@@ -68,8 +68,8 @@ func TestHarness_DrivesTheStewardWithAScriptedExchange(t *testing.T) {
 	if len(ex.Args) != 1 || ex.Args[0].Name != "outcome" || ex.Args[0].Value != string(koine.Success) {
 		t.Errorf("the intent carried %#v", ex.Args)
 	}
-	if !ex.Consumed {
-		t.Error("Value() was consumed, but the run did not see it")
+	if ex.Consumption != manifest.Inline {
+		t.Errorf("Value() was consumed; the run saw %q", ex.Consumption)
 	}
 	if out.Consumption["history.last"] != manifest.Inline {
 		t.Errorf("consumption = %q, want inline", out.Consumption["history.last"])
@@ -127,13 +127,13 @@ func TestHarness_TheTypedVariantIsBranchedOnNotDefendedAgainst(t *testing.T) {
 	}
 }
 
-// TestHarness_ConsumptionIsObservedNotDeclared pins the honest limit of a
-// pure-Resolve run. The auditor speaks one exchange it never consumes and
-// one it detaches; at run time both are the same object doing the same
-// nothing, so both read as concurrent. Detach is a declaration the analyzer
-// reads from source — and manifest.Consumption.Observable is where the two
-// readings meet.
-func TestHarness_ConsumptionIsObservedNotDeclared(t *testing.T) {
+// TestHarness_AllThreeConsumptionPatternsAreWitnessed pins the third chain
+// role now that koine.Detach tells the host below the handle as well as the
+// analyzer reading the source (ruled 2026-08-27). The auditor speaks one
+// exchange it never consumes and one it releases, and a run can tell them
+// apart — which is what lets the conformance gate compare the manifest word
+// for word instead of through a collapse.
+func TestHarness_AllThreeConsumptionPatternsAreWitnessed(t *testing.T) {
 	out := koinetest.Run(station.DeploymentAuditor{},
 		koinetest.Deliver(deployment.ResolvedDelivery{
 			Outcome:     koine.Failure,
@@ -146,16 +146,28 @@ func TestHarness_ConsumptionIsObservedNotDeclared(t *testing.T) {
 	if len(out.Exchanges) != 2 {
 		t.Fatalf("the auditor spoke %d exchanges, want two", len(out.Exchanges))
 	}
-	for _, name := range []string{"history.last", "ledger.note"} {
-		if out.Consumption[name] != manifest.Concurrent {
-			t.Errorf("%s observed as %q, want concurrent", name, out.Consumption[name])
+	want := map[string]manifest.Consumption{
+		"history.last": manifest.Concurrent, // spoken, never consumed — the gate stands
+		"ledger.note":  manifest.Detached,   // released, in code, under the author's name
+	}
+	for name, how := range want {
+		if out.Consumption[name] != how {
+			t.Errorf("%s observed as %q, want %q", name, out.Consumption[name], how)
 		}
 	}
-	if manifest.Detached.Observable() != manifest.Concurrent {
-		t.Error("a detached exchange must observe as concurrent — a run cannot see a word that was only written")
+	for _, ex := range out.Exchanges {
+		if ex.Consumption != want[ex.Name] {
+			t.Errorf("%s: Spoken says %q, want %q", ex.Name, ex.Consumption, want[ex.Name])
+		}
 	}
-	if manifest.Inline.Observable() != manifest.Inline {
-		t.Error("inline is observable as itself")
+
+	// And the steward's inline reading is still its own thing, so the three
+	// roles are three and not two wearing one name.
+	inline := koinetest.Run(station.DeploymentSteward{},
+		koinetest.Deliver(deployment.ResolvedDelivery{Outcome: koine.Failure, ArtifactID: "sha256:bad"}),
+		koinetest.Exchange("history.last", lastGood))
+	if inline.Consumption["history.last"] != manifest.Inline {
+		t.Errorf("the steward's consumed exchange observed as %q", inline.Consumption["history.last"])
 	}
 }
 

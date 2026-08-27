@@ -51,23 +51,24 @@ type Out struct {
 	Exchanges []Spoken
 
 	// Consumption is how each exchange was treated, by exchange name.
-	//
-	// Only two of the three patterns are observable from a run, and that
-	// is not a gap in the harness: Detach is a DECLARATION the analyzer
-	// reads from source, and at run time a detached handle and a merely
-	// unconsumed one do the same nothing. A run therefore reports Inline
-	// or Concurrent, and a manifest's Detached compares through
-	// manifest.Consumption.Observable.
+	// All three patterns are witnessed, not inferred: Value() reports
+	// itself through the broker, and so does koine.Detach (ruled
+	// 2026-08-27). A run and the manifest koinegen derived can therefore
+	// be compared word for word, which is what makes A3 a gate rather
+	// than a gesture.
 	Consumption map[string]manifest.Consumption
 }
 
 // Spoken is one exchange as the run saw it.
 type Spoken struct {
-	Seat     string
-	Name     string
-	Args     []koine.Arg
-	Consumed bool  // Value() materialized the answer — inline
-	Err      error // the typed outcome variant the script answered with
+	Seat string
+	Name string
+	Args []koine.Arg
+	// Consumption is this exchange's pattern, in the same vocabulary the
+	// manifest uses — one word for one fact, at both altitudes.
+	Consumption manifest.Consumption
+	// Err is the typed outcome variant the script answered with.
+	Err error
 }
 
 // Option scripts one part of a run.
@@ -147,12 +148,8 @@ func Run(k koine.Koine, opts ...Option) Out {
 	}
 	for _, s := range r.spoken {
 		out.Exchanges = append(out.Exchanges, *s)
-		how := manifest.Concurrent
-		if s.Consumed {
-			how = manifest.Inline
-		}
 		if out.Consumption[s.Name] != manifest.Inline {
-			out.Consumption[s.Name] = how
+			out.Consumption[s.Name] = s.Consumption
 		}
 	}
 	return out
@@ -166,7 +163,7 @@ func (r *run) Speak(ex koine.Exchange) koine.Answer {
 	if !ok {
 		panic(fmt.Sprintf("koinetest: nothing scripted for exchange %q (seat %q) — script it with koinetest.Exchange or koinetest.ExchangeFails; a harness that invented the answer would be asserting on a fact you never stated. Scripted: %v", ex.Name, ex.Seat, r.scriptedNames()))
 	}
-	spoken := &Spoken{Seat: ex.Seat, Name: ex.Name, Args: ex.Args, Err: s.err}
+	spoken := &Spoken{Seat: ex.Seat, Name: ex.Name, Args: ex.Args, Consumption: manifest.Concurrent, Err: s.err}
 	r.spoken = append(r.spoken, spoken)
 	r.byName[ex.Name] = spoken
 	if s.err != nil {
@@ -179,12 +176,21 @@ func (r *run) Speak(ex koine.Exchange) koine.Answer {
 	return koine.Answer{By: koine.ActorRef("koinetest:" + ex.Seat), JSON: data}
 }
 
-// Consumed records that the body materialized this exchange's value — the
-// beat that makes the run's reading of inline-versus-gated a fact rather
-// than an inference.
+// Consumed records that the body materialized this exchange's value: the
+// exchange ran in the caller's own sequence, inline.
 func (r *run) Consumed(ex koine.Exchange) {
 	if s := r.byName[ex.Name]; s != nil {
-		s.Consumed = true
+		s.Consumption = manifest.Inline
+	}
+}
+
+// Detached records that koine.Detach was spoken over this exchange's handle,
+// releasing it from the station's completion gate. Consuming a value is the
+// stronger statement, so a body that somehow did both reads as inline — and
+// koinegen refuses that contradiction outright, before anything runs.
+func (r *run) Detached(ex koine.Exchange) {
+	if s := r.byName[ex.Name]; s != nil && s.Consumption != manifest.Inline {
+		s.Consumption = manifest.Detached
 	}
 }
 

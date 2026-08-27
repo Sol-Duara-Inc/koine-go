@@ -46,9 +46,16 @@ type Answer struct {
 // host already knows this statically, from the manifest koinegen derived;
 // hearing it again at run time is what lets a conformance test prove the
 // declaration and the body agree (A3).
+//
+// Detached is the same beat for the other divergence: koine.Detach was
+// spoken over the handle, releasing the exchange from the station's
+// completion gate. Both beats exist so a run can witness the topology the
+// manifest declares statically, rather than the gate having to take the
+// manifest's word for it.
 type Broker interface {
 	Speak(Exchange) Answer
 	Consumed(Exchange)
+	Detached(Exchange)
 }
 
 // Bindable is a generated delivery that can be wired to the broker standing

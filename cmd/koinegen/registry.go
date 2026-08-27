@@ -220,6 +220,16 @@ func (r *Registry) judge() error {
 			return err
 		}
 	}
+	// Linking is a pass of its OWN, before any judgement reads a lineage.
+	// It has to be: namespaces are judged in name order, so a namespace
+	// that sorts before its ancestor would otherwise walk a one-link chain
+	// and the strata below it would be invisible to the shadow and
+	// wire-key checks — a guard whose reach depended on the alphabet.
+	for _, ns := range r.Namespaces {
+		if err := ns.linkTypes(); err != nil {
+			return err
+		}
+	}
 	for _, ns := range r.Namespaces {
 		if err := ns.judgeTypes(); err != nil {
 			return err
@@ -227,6 +237,11 @@ func (r *Registry) judge() error {
 	}
 	for _, ns := range r.Namespaces {
 		if err := ns.judgeDeliveries(); err != nil {
+			return err
+		}
+	}
+	for _, ns := range r.Namespaces {
+		if err := ns.judgeIdentifiers(); err != nil {
 			return err
 		}
 	}
@@ -278,13 +293,11 @@ func (ns *Namespace) RefOwner(name string) *Namespace {
 	return nil
 }
 
-func (ns *Namespace) judgeTypes() error {
+// linkTypes binds each type to its declaring namespace and to the type it
+// extends. It runs for every namespace before any of them is judged, so a
+// check that walks a lineage always walks the whole one.
+func (ns *Namespace) linkTypes() error {
 	names := map[string]bool{}
-	for _, ref := range ns.Refs {
-		if !exportedPattern.MatchString(ref.Name) {
-			return fmt.Errorf("koinegen: %s: ref %q must be an exported Go identifier", ns.file, ref.Name)
-		}
-	}
 	for _, t := range ns.Types {
 		t.ns = ns
 		if !exportedPattern.MatchString(t.Name) {
@@ -294,18 +307,30 @@ func (ns *Namespace) judgeTypes() error {
 			return fmt.Errorf("koinegen: %s: type %q is declared twice", ns.file, t.Name)
 		}
 		names[t.Name] = true
+		if t.Extends == "" {
+			continue
+		}
+		if ns.parent == nil {
+			return fmt.Errorf("koinegen: %s: type %q extends %q but the namespace extends nothing", ns.file, t.Name, t.Extends)
+		}
+		parent := ns.parent.TypeNamed(t.Extends)
+		if parent == nil {
+			return fmt.Errorf("koinegen: %s: type %q extends unknown type %s.%s", ns.file, t.Name, ns.parent.Namespace, t.Extends)
+		}
+		t.parent = parent
+	}
+	return nil
+}
+
+func (ns *Namespace) judgeTypes() error {
+	for _, ref := range ns.Refs {
+		if !exportedPattern.MatchString(ref.Name) {
+			return fmt.Errorf("koinegen: %s: ref %q must be an exported Go identifier", ns.file, ref.Name)
+		}
+	}
+	for _, t := range ns.Types {
 		if t.Event == "" {
 			return fmt.Errorf("koinegen: %s: type %q declares no event type", ns.file, t.Name)
-		}
-		if t.Extends != "" {
-			if ns.parent == nil {
-				return fmt.Errorf("koinegen: %s: type %q extends %q but the namespace extends nothing", ns.file, t.Name, t.Extends)
-			}
-			parent := ns.parent.TypeNamed(t.Extends)
-			if parent == nil {
-				return fmt.Errorf("koinegen: %s: type %q extends unknown type %s.%s", ns.file, t.Name, ns.parent.Namespace, t.Extends)
-			}
-			t.parent = parent
 		}
 		fields := map[string]bool{}
 		keys := map[string]bool{}
@@ -465,4 +490,70 @@ func (ns *Namespace) resolveFieldType(t string) (string, error) {
 		return t, nil
 	}
 	return scalarKind(t)
+}
+
+// judgeIdentifiers refuses a namespace whose generated package would declare
+// one name twice. Codegen derives package-scope identifiers from several
+// independent places in the registry — a type, its seeding constructor, a
+// delivery, the selector constructor named after it, a seat type, a handle —
+// and none of those places can see the others. Collecting every name the
+// package WILL emit and judging the set is the only place the collision is
+// visible before the Go compiler finds it.
+func (ns *Namespace) judgeIdentifiers() error {
+	declared := map[string]string{}
+	claim := func(ident, by string) error {
+		if prior, taken := declared[ident]; taken {
+			return fmt.Errorf("koinegen: %s: package %s would declare %q twice — %s and %s", ns.file, ns.Package, ident, prior, by)
+		}
+		declared[ident] = by
+		return nil
+	}
+	for _, ref := range ns.Refs {
+		if err := claim(ref.Name, "the ref "+ref.Name); err != nil {
+			return err
+		}
+	}
+	for _, t := range ns.Types {
+		if err := claim(t.Name, "the type "+t.Name); err != nil {
+			return err
+		}
+		if err := claim("Seed"+t.Name, "the seeding constructor for "+t.Name); err != nil {
+			return err
+		}
+	}
+	for _, d := range ns.Deliveries {
+		if err := claim(d.Name, "the delivery "+d.Name); err != nil {
+			return err
+		}
+		if err := claim(d.AwaitFunc(), "the selector constructor for "+d.Name); err != nil {
+			return err
+		}
+		for _, v := range d.Verbs {
+			if err := claim(seatTypeName(v), "the seat type for "+d.Name+"."+v.Name); err != nil {
+				return err
+			}
+			for _, in := range v.Intents {
+				ident := handleTypeName(in.ReturnType())
+				if declared[ident] == "" {
+					declared[ident] = "the handle for " + in.ReturnType().Name
+					continue
+				}
+				// One handle type serves every intent that answers with
+				// the same shape; that is sharing, not collision.
+				if !strings.HasPrefix(declared[ident], "the handle for ") {
+					return fmt.Errorf("koinegen: %s: package %s would declare %q twice — %s and the handle for %s",
+						ns.file, ns.Package, ident, declared[ident], in.ReturnType().Name)
+				}
+			}
+		}
+	}
+	// Generated files import the packages of the strata below, so a local
+	// name that shadows one of them is refused here too.
+	for p := ns.parent; p != nil; p = p.parent {
+		if prior, taken := declared[p.Package]; taken {
+			return fmt.Errorf("koinegen: %s: package %s declares %q (%s), which shadows the imported package for %s",
+				ns.file, ns.Package, p.Package, prior, p.Namespace)
+		}
+	}
+	return nil
 }

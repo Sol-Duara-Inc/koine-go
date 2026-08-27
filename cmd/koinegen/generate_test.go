@@ -282,6 +282,18 @@ func TestGenerate_RegistryRefusesByName(t *testing.T) {
 			wantIn: "Subject",
 		},
 		{
+			name:   "a delivery cannot collide with a type name",
+			file:   "io.collideident.json",
+			body:   `{"namespace":"io.collideident","package":"collideident","stratum":"floor","doc":"x","refs":[{"name":"R","doc":"x"}],"types":[{"name":"Deploy","event":"e","doc":"x","fields":[{"name":"F","json":"f","type":"string"}]}],"deliveries":[{"name":"DeployDelivery","of":"Deploy","doc":"x","await":{"mode":"event","type":"e"}}]}`,
+			wantIn: `would declare "Deploy" twice`,
+		},
+		{
+			name:   "two seats in one namespace cannot share a verb name",
+			file:   "io.collideseat.json",
+			body:   `{"namespace":"io.collideseat","package":"collideseat","stratum":"floor","doc":"x","types":[{"name":"T","event":"e","doc":"x","fields":[{"name":"F","json":"f","type":"string"}]}],"deliveries":[{"name":"ADelivery","of":"T","doc":"x","await":{"mode":"event","type":"e"},"verbs":[{"name":"History","seat":"h","doc":"x","intents":[{"name":"Ask","exchange":"h.ask","returns":"T","doc":"x"}]}]},{"name":"BDelivery","of":"T","doc":"x","await":{"mode":"event","type":"e"},"verbs":[{"name":"History","seat":"h2","doc":"x","intents":[{"name":"Ask","exchange":"h2.ask","returns":"T","doc":"x"}]}]}]}`,
+			wantIn: `would declare "HistorySeat" twice`,
+		},
+		{
 			name:   "a field type outside the grammar",
 			file:   "io.grammar.json",
 			body:   `{"namespace":"io.grammar","package":"grammar","stratum":"floor","doc":"x","types":[{"name":"T","event":"e","doc":"x","fields":[{"name":"F","json":"f","type":"float64"}]}]}`,
@@ -321,4 +333,119 @@ func TestGenerate_RegistryRefusesByName(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGenerate_RefusalDoesNotDependOnNamespaceOrder pins that the registry's
+// guards reach the whole lineage regardless of where a namespace sorts.
+// Namespaces are loaded and judged in name order; linking a type to the type
+// it extends therefore has to be a pass of its own, run for every namespace
+// BEFORE any of them is judged. Without that, a namespace sorting ahead of
+// its ancestor walks a one-link chain, the floor's fields are invisible, and
+// the guard's reach is decided by the alphabet.
+//
+// The two schemas below are the same schema under two names — one sorting
+// before its ancestor, one after. Both must be refused, and for the same
+// reason.
+func TestGenerate_RefusalDoesNotDependOnNamespaceOrder(t *testing.T) {
+	collisions := []struct {
+		name, kind, wantIn string
+	}{
+		{
+			name:   "a Go field shadowing an inherited one",
+			kind:   `{"name":"Subject","json":"subjectAgain","type":"string"}`,
+			wantIn: "shadows inherited field",
+		},
+		{
+			// The silent one: a distinct Go name reusing the floor's wire
+			// key compiles, and round-trips wrong — the same key written
+			// twice, the inherited value lost on the way back.
+			name:   "a distinct Go field reusing an inherited wire key",
+			kind:   `{"name":"Region","json":"subject","type":"string"}`,
+			wantIn: `reuses wire key "subject"`,
+		},
+	}
+	// The collision is with a FLOOR key, two links up, so the chain the
+	// guard has to walk is longer than one. "com.…" sorts before both of
+	// its ancestors; "org.…" sorts after both.
+	orderings := map[string]string{
+		"sorting before its ancestors": "com.example.collide",
+		"sorting after its ancestors":  "org.example.collide",
+	}
+
+	for _, c := range collisions {
+		t.Run(c.name, func(t *testing.T) {
+			for ordering, namespace := range orderings {
+				dir := t.TempDir()
+				for _, ancestor := range []string{"dev.cdevents.build.json", "io.jenkins.json"} {
+					raw, err := os.ReadFile(filepath.Join(registryDir(t), ancestor))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, ancestor), raw, 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				body := `{"namespace":"` + namespace + `","package":"collide","stratum":"customer",` +
+					`"extends":"io.jenkins","doc":"x","types":[{"name":"CollideBuildFinished",` +
+					`"event":"dev.cdevents.build.finished","extends":"JenkinsBuildFinished","doc":"x","fields":[` + c.kind + `]}]}`
+				if err := os.WriteFile(filepath.Join(dir, namespace+".json"), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				reg, err := LoadRegistry(dir)
+				if err == nil {
+					t.Errorf("%s: admitted — the guard's reach is decided by the alphabet", ordering)
+					continue
+				}
+				if reg != nil {
+					t.Errorf("%s: a refusal stored a registry", ordering)
+				}
+				if !strings.Contains(err.Error(), c.wantIn) {
+					t.Errorf("%s: the refusal did not say %q: %v", ordering, c.wantIn, err)
+				}
+			}
+		})
+	}
+}
+
+// TestGenerate_TheCommittedCustomerStratumIsJudgedWhereItSorts is the same
+// point aimed at the shipped fixtures: com.example.payments-engineering
+// sorts before io.jenkins, so it sat in exactly the blind spot above. It is
+// admitted because it collides with nothing — and the collision it does not
+// have is now actually looked for.
+func TestGenerate_TheCommittedCustomerStratumIsJudgedWhereItSorts(t *testing.T) {
+	reg := loadFixtureRegistry(t)
+	customer := reg.Namespace("com.example.payments-engineering")
+	if customer == nil {
+		t.Fatal("the customer stratum is not in the registry")
+	}
+	want := []string{"com.example.payments-engineering", "io.jenkins", "dev.cdevents.build"}
+	if got := customer.Lineage(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("lineage = %v, want %v — a stratum that sorts before its ancestor still sees the whole chain", got, want)
+	}
+	t.Run("and a collision in it is refused", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, name := range []string{"dev.cdevents.build.json", "io.jenkins.json"} {
+			raw, err := os.ReadFile(filepath.Join(registryDir(t), name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The reused key belongs to the FLOOR, two links above — the reach
+		// that ordering used to decide.
+		body := `{"namespace":"com.example.payments-engineering","package":"payments","stratum":"customer",` +
+			`"extends":"io.jenkins","doc":"x","types":[{"name":"PaymentsBuildFinished",` +
+			`"event":"dev.cdevents.build.finished","extends":"JenkinsBuildFinished","doc":"x","fields":[` +
+			`{"name":"Region","json":"subject","type":"string"}]}]}`
+		if err := os.WriteFile(filepath.Join(dir, "com.example.payments-engineering.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadRegistry(dir); err == nil {
+			t.Fatal("the customer stratum reused the floor's wire key and was admitted")
+		} else if !strings.Contains(err.Error(), `reuses wire key "subject"`) {
+			t.Fatalf("the refusal did not name the key: %v", err)
+		}
+	})
 }

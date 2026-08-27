@@ -18,9 +18,10 @@ import (
 // touched. Every path of every fixture station is driven below, so the two
 // readings cover each other completely.
 //
-// Detach is the one word a run cannot see (§6: it is a declaration the
-// analyzer reads from source), so the comparison goes through
-// manifest.Consumption.Observable rather than pretending otherwise.
+// All three chain roles are compared word for word. Until 2026-08-27 the
+// third was invisible to a run — koine.Detach was read from source and
+// nowhere else, so a wrong "detached" could pass this gate. Detach now tells
+// the host below the handle as well, and the comparison below is exact.
 
 // behaviour is one driven path and what it turned out to say.
 type behaviour struct {
@@ -77,6 +78,28 @@ func drivenPaths(t *testing.T) map[string][]behaviour {
 					koinetest.Exchange("ledger.note", noted)),
 			},
 		},
+		// The rehearsal binds its handle and its seat before speaking
+		// through them. Driving it here is what keeps the gate honest
+		// about the spelling: an analyzer that only read chained calls
+		// would declare its inline exchange blocking, and this comparison
+		// would catch it.
+		"DeploymentRehearsal": {
+			{
+				name:    "the variant branch",
+				station: station.DeploymentRehearsal{},
+				out: koinetest.Run(station.DeploymentRehearsal{},
+					koinetest.Deliver(failed),
+					koinetest.ExchangeFails("history.last", errors.New("nothing good to fall back to"))),
+			},
+			{
+				name:    "the answered branch",
+				station: station.DeploymentRehearsal{},
+				out: koinetest.Run(station.DeploymentRehearsal{},
+					koinetest.Deliver(failed),
+					koinetest.Exchange("history.last", lastGood),
+					koinetest.Exchange("ledger.note", noted)),
+			},
+		},
 	}
 }
 
@@ -85,6 +108,7 @@ func drivenPaths(t *testing.T) map[string][]behaviour {
 func TestManifest_ExtractorMatchesBehaviour(t *testing.T) {
 	declared := extractFixtures(t)
 	driven := drivenPaths(t)
+	witnessed := map[manifest.Consumption]bool{}
 
 	for name, paths := range driven {
 		m, ok := declared[name]
@@ -138,18 +162,15 @@ func TestManifest_ExtractorMatchesBehaviour(t *testing.T) {
 
 				for _, ex := range b.out.Exchanges {
 					touched[ex.Name] = true
+					witnessed[ex.Consumption] = true
 					how, ok := exchanges[ex.Name]
 					if !ok {
 						t.Errorf("the body spoke exchange %q, which the manifest does not declare", ex.Name)
 						continue
 					}
-					observed := manifest.Concurrent
-					if ex.Consumed {
-						observed = manifest.Inline
-					}
-					if how.Observable() != observed {
-						t.Errorf("%s: the manifest reads %q (observable as %q); the run observed %q",
-							ex.Name, how, how.Observable(), observed)
+					if how != ex.Consumption {
+						t.Errorf("%s: the manifest reads %q; the run observed %q",
+							ex.Name, how, ex.Consumption)
 					}
 					if !seats[ex.Seat] {
 						t.Errorf("the body spoke at seat %q, which the manifest does not require", ex.Seat)
@@ -170,6 +191,16 @@ func TestManifest_ExtractorMatchesBehaviour(t *testing.T) {
 			if !touched[ex.Name] {
 				t.Errorf("%s declares exchange %q that no driven path ever speaks", name, ex.Name)
 			}
+		}
+	}
+
+	// And the gate can tell all three roles apart. A comparison that
+	// collapsed two of them would pass every assertion above while letting
+	// a wrong word through — which is exactly what it did until Detach
+	// began telling the host as well as the analyzer.
+	for _, how := range []manifest.Consumption{manifest.Inline, manifest.Concurrent, manifest.Detached} {
+		if !witnessed[how] {
+			t.Errorf("no driven path ever WITNESSED %q — the gate cannot catch a manifest that claims it", how)
 		}
 	}
 }

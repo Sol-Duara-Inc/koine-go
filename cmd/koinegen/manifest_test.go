@@ -137,8 +137,9 @@ func TestManifest_ConsumptionTopologyIsTheChainRoles(t *testing.T) {
 func TestManifest_GoldensAreByteStable(t *testing.T) {
 	found := extractFixtures(t)
 	goldens := map[string]string{
-		"DeploymentSteward": "deployment-steward.json",
-		"DeploymentAuditor": "deployment-auditor.json",
+		"DeploymentSteward":   "deployment-steward.json",
+		"DeploymentAuditor":   "deployment-auditor.json",
+		"DeploymentRehearsal": "deployment-rehearsal.json",
 	}
 	dir := filepath.Join(repoRoot(t), "cmd", "koinegen", "fixtures", "manifests")
 	for station, file := range goldens {
@@ -166,7 +167,7 @@ func TestManifest_GoldensAreByteStable(t *testing.T) {
 // be refused, by name, rather than quietly preferred or quietly merged.
 func TestManifest_HandWrittenManifestsAreRefusedWork(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"doc.go", "steward.go", "auditor.go"} {
+	for _, name := range []string{"doc.go", "steward.go", "auditor.go", "rehearsal.go"} {
 		raw, err := os.ReadFile(filepath.Join(stationDir(t), name))
 		if err != nil {
 			t.Fatal(err)
@@ -300,6 +301,218 @@ func (Halfling) Resolve(d koine.Delivery, y koine.Yield) {
 			}
 			if !strings.Contains(err.Error(), c.wantIn) {
 				t.Fatalf("the refusal did not say %q: %v", c.wantIn, err)
+			}
+		})
+	}
+}
+
+// extractStation writes one station source into a directory of its own and
+// derives it. The bodies below are valid Go; they are never compiled here
+// because the extractor is a reader of source, and what is under test is
+// exactly what it reads.
+func extractStation(t *testing.T, body string) (map[string]manifest.Manifest, error) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "probe.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return Extract(loadFixtureRegistry(t), dir)
+}
+
+const probeHead = `package probe
+
+import (
+	"github.com/sol-duara-inc/koine-go/cmd/koinegen/fixtures/strata/deployment"
+	"github.com/sol-duara-inc/koine-go/koine"
+	"github.com/sol-duara-inc/koine-go/koine/selector"
+)
+
+type Probe struct{ koine.ObserverBase }
+
+func (Probe) Identity() koine.Identity    { return koine.Identity{Group: "g", Author: "a", Name: "n"} }
+func (Probe) Awaits() []selector.Selector { return selector.List(deployment.Resolved()) }
+func (Probe) Complete() koine.Contract    { return koine.DefaultAllAwaited }
+
+func (p Probe) Resolve(d koine.Delivery, yield koine.Yield) {
+	dep := d.(deployment.ResolvedDelivery)
+`
+
+const probeTail = `
+	yield(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
+}
+
+func (p Probe) helper(dep deployment.ResolvedDelivery, yield koine.Yield) {
+	dep.History().Last(koine.Success)
+}
+
+func (p Probe) speakFor(dep deployment.ResolvedDelivery) {
+	dep.History().Last(koine.Success)
+}
+
+func (p Probe) gate(h koine.Handle[deployment.DeploymentFinished]) {}
+
+func (p Probe) atSeat(s deployment.HistorySeat) {}
+`
+
+// TestManifest_ConsumptionFollowsTheHandleThroughItsBinding pins the reading
+// the analyzer must get right: the pattern is a property of what the body
+// DOES with the handle, never of how the call happened to be spelled.
+// Binding is not a style — it is the only way to reach Received().
+func TestManifest_ConsumptionFollowsTheHandleThroughItsBinding(t *testing.T) {
+	cases := []struct {
+		name, body string
+		want       manifest.Consumption
+		role       string
+	}{
+		{
+			name: "chained and consumed",
+			body: "\t_, _ = dep.History().Last(koine.Success).Value()",
+			want: manifest.Inline, role: "main",
+		},
+		{
+			name: "bound, then consumed",
+			body: "\th := dep.History().Last(koine.Success)\n\t_, _ = h.Value()",
+			want: manifest.Inline, role: "main",
+		},
+		{
+			name: "bound, gated on the fast beat, then consumed",
+			body: "\th := dep.History().Last(koine.Success)\n\t_ = h.Received()\n\t_, _ = h.Value()",
+			want: manifest.Inline, role: "main",
+		},
+		{
+			name: "bound and gated on the fast beat only",
+			body: "\th := dep.History().Last(koine.Success)\n\t_ = h.Received()",
+			want: manifest.Concurrent, role: "blocking",
+		},
+		{
+			name: "spoken and walked away from",
+			body: "\tdep.History().Last(koine.Success)",
+			want: manifest.Concurrent, role: "blocking",
+		},
+		{
+			name: "bound to the blank identifier",
+			body: "\t_ = dep.History().Last(koine.Success)",
+			want: manifest.Concurrent, role: "blocking",
+		},
+		{
+			name: "bound and released",
+			body: "\th := dep.History().Last(koine.Success)\n\tkoine.Detach(h)",
+			want: manifest.Detached, role: "detached",
+		},
+		{
+			name: "released without ever being named",
+			body: "\tkoine.Detach(dep.History().Last(koine.Success))",
+			want: manifest.Detached, role: "detached",
+		},
+		{
+			name: "released with the type written out",
+			body: "\th := dep.History().Last(koine.Success)\n\tkoine.Detach[deployment.DeploymentFinished](h)",
+			want: manifest.Detached, role: "detached",
+		},
+		{
+			name: "spoken through a bound seat",
+			body: "\tseat := dep.History()\n\t_, _ = seat.Last(koine.Success).Value()",
+			want: manifest.Inline, role: "main",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			found, err := extractStation(t, probeHead+c.body+probeTail)
+			if err != nil {
+				t.Fatalf("the analyzer refused a body it can read: %v", err)
+			}
+			ex := found["Probe"].Koine.Exchanges
+			if len(ex) != 1 {
+				t.Fatalf("the probe speaks %d exchanges, want one: %#v", len(ex), ex)
+			}
+			if ex[0].Name != "history.last" {
+				t.Fatalf("the probe spoke %q", ex[0].Name)
+			}
+			if ex[0].Consumption != c.want || ex[0].ChainRole != c.role {
+				t.Errorf("read as %q/%q, want %q/%q", ex[0].Consumption, ex[0].ChainRole, c.want, c.role)
+			}
+			if len(found["Probe"].Koine.Seats) != 1 || found["Probe"].Koine.Seats[0].Seat != "history" {
+				t.Errorf("the seat did not reach the manifest: %#v", found["Probe"].Koine.Seats)
+			}
+		})
+	}
+}
+
+// TestManifest_RefusesWhatItCannotReadWithCertainty is A9 applied where it
+// binds hardest. The manifest is a contract the engine mints coordinates and
+// budget from, so a reading the analyzer had to guess at is worse than no
+// manifest: it is a declaration that lies about the code, which is the exact
+// thing A3 exists to prevent. Every body below is ordinary Go that this
+// analyzer cannot read with certainty, and every one of them is refused by
+// name rather than defaulted.
+func TestManifest_RefusesWhatItCannotReadWithCertainty(t *testing.T) {
+	cases := []struct {
+		name, body, wantIn string
+	}{
+		{
+			name: "a handle name reused for a second handle",
+			body: "\th := dep.Ledger().Note(\"released, on purpose\")\n" +
+				"\tkoine.Detach(h)\n" +
+				"\th = dep.Ledger().Note(\"gated, on purpose\")\n\t_ = h",
+			wantIn: `binds "h" 2 times`,
+		},
+		{
+			name: "a handle shadowed in an inner scope",
+			body: "\th := dep.History().Last(koine.Success)\n" +
+				"\tkoine.Detach(h)\n" +
+				"\tif dep.Outcome == koine.Failure {\n\t\th := dep.Ledger().Note(\"inner\")\n\t\t_ = h\n\t}",
+			wantIn: `binds "h" 2 times`,
+		},
+		{
+			name:   "a handle both consumed and released",
+			body:   "\th := dep.History().Last(koine.Success)\n\t_, _ = h.Value()\n\tkoine.Detach(h)",
+			wantIn: "both consumes and detaches",
+		},
+		{
+			name:   "a handle handed to a helper",
+			body:   "\th := dep.History().Last(koine.Success)\n\tp.gate(h)",
+			wantIn: "hands the handle",
+		},
+		{
+			name:   "a handle handed straight to a helper",
+			body:   "\tp.gate(dep.History().Last(koine.Success))",
+			wantIn: "hands the handle to",
+		},
+		{
+			name:   "a seat handed to a helper",
+			body:   "\tp.atSeat(dep.History())",
+			wantIn: `hands the "history" seat`,
+		},
+		{
+			name:   "a seat bound and then handed to a helper",
+			body:   "\tseat := dep.History()\n\tp.atSeat(seat)",
+			wantIn: `hands the "history" seat`,
+		},
+		{
+			name:   "the delivery handed to a helper that speaks",
+			body:   "\tp.speakFor(dep)",
+			wantIn: "hands its delivery",
+		},
+		{
+			name:   "the yield handed away",
+			body:   "\tp.helper(deployment.ResolvedDelivery{}, yield)",
+			wantIn: "hands its koine.Yield argument",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			found, err := extractStation(t, probeHead+c.body+probeTail)
+			if err == nil {
+				t.Fatalf("the analyzer read a body it cannot read with certainty, and declared: %#v", found["Probe"].Koine)
+			}
+			if found != nil {
+				t.Fatal("a refusal stored manifests — nothing is stored on refusal")
+			}
+			if !strings.Contains(err.Error(), c.wantIn) {
+				t.Fatalf("the refusal did not say %q: %v", c.wantIn, err)
+			}
+			if !strings.Contains(err.Error(), "Probe.Resolve") {
+				t.Fatalf("the refusal did not name the station: %v", err)
 			}
 		})
 	}

@@ -50,7 +50,7 @@ func (g *generator) deliveryFile(ns *Namespace) ([]byte, error) {
 		g.writeAwaitFunc(&b, d)
 		g.writeDelivery(&b, ns, d)
 		for _, v := range d.Verbs {
-			g.writeVerb(&b, ns, d, v)
+			g.writeVerb(&b, ns, v)
 			for _, in := range v.Intents {
 				handles[in.ReturnType().Name] = in.ReturnType()
 			}
@@ -136,14 +136,18 @@ func (g *generator) writeDelivery(b *strings.Builder, ns *Namespace, d *Delivery
 	for _, v := range d.Verbs {
 		comment(b, v.Name+" "+v.Doc, "It opens the "+strconv.Quote(v.Seat)+" seat. An unfilled seat is refused at registration by name — the honest terminus, before runtime — never discovered in here.")
 		fmt.Fprintf(b, "func (d %s) %s() %s {\n\treturn %s{broker: d.broker}\n}\n\n",
-			d.Name, v.Name, verbTypeName(d, v), verbTypeName(d, v))
+			d.Name, v.Name, seatTypeName(v), seatTypeName(v))
 	}
 }
 
-func verbTypeName(d *Delivery, v *Verb) string { return v.Name + "Seat" }
+// seatTypeName is the package-scope name of a seat's generated type. It is
+// derived from the verb alone, so two deliveries in one namespace declaring
+// the same verb name would collide — which judgeIdentifiers refuses by name
+// at load, before a line is written.
+func seatTypeName(v *Verb) string { return v.Name + "Seat" }
 
-func (g *generator) writeVerb(b *strings.Builder, ns *Namespace, d *Delivery, v *Verb) {
-	name := verbTypeName(d, v)
+func (g *generator) writeVerb(b *strings.Builder, ns *Namespace, v *Verb) {
+	name := seatTypeName(v)
 	comment(b, name+" is the "+strconv.Quote(v.Seat)+" seat, curried with the station's context at construction. A body speaks intents at it; it never names a tool and it never names an address. The operator owns the address and the credential, and the deployment binds the client.")
 	fmt.Fprintf(b, "type %s struct{ broker koine.Broker }\n\n", name)
 
@@ -201,6 +205,9 @@ func (g *generator) writeHandle(b *strings.Builder, t *Type) {
 
 	comment(b, "Received is the fast beat: someone who declared comprehension has this now.")
 	fmt.Fprintf(b, "func (h *%s) Received() koine.Ack {\n\th.speak()\n\treturn koine.Ack{By: h.answer.By}\n}\n\n", name)
+
+	comment(b, "MarkDetached fills koine.Detachable, so a written koine.Detach is a spoken one: the host below the handle is told the exchange was released from this station's completion gate. Divergence is loud in both readings — the source the analyzer reads and the beat a run witnesses.")
+	fmt.Fprintf(b, "func (h *%s) MarkDetached() {\n\th.speak()\n\th.broker.Detached(h.exchange)\n}\n\n", name)
 
 	comment(b, "Value gates on completion and materializes the answer. The error is the typed outcome variant of the expected response, never transport — branch on it, don't defend against it.")
 	fmt.Fprintf(b, "func (h *%s) Value() (%s, error) {\n", name, t.Name)

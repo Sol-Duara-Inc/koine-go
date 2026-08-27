@@ -14,3 +14,4 @@ package fixtures
 //go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen generate -registry ../testdata/registry -out ./strata -pkgbase github.com/sol-duara-inc/koine-go/cmd/koinegen/fixtures/strata
 //go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine DeploymentSteward -o ./manifests/deployment-steward.json
 //go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine DeploymentAuditor -o ./manifests/deployment-auditor.json
+//go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine DeploymentRehearsal -o ./manifests/deployment-rehearsal.json
