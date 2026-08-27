@@ -1,0 +1,27 @@
+{
+  "namespace": "io.jenkins",
+  "package": "jenkins",
+  "stratum": "vendor",
+  "extends": "dev.cdevents.build",
+  "doc": "the vendor stratum: the community agreement plus the keys this tool knows and the floor never will.",
+  "types": [
+    {
+      "name": "JenkinsBuildFinished",
+      "event": "dev.cdevents.build.finished",
+      "extends": "BuildFinished",
+      "doc": "is a finished build as this vendor speaks it: the agreement, embedded, plus the vendor's own keys.",
+      "fields": [
+        {"name": "ExecutorNode", "json": "executorNode", "type": "string", "doc": ""},
+        {"name": "QueueWaitMS", "json": "queueWaitMs", "type": "int", "doc": ""}
+      ]
+    }
+  ],
+  "deliveries": [
+    {
+      "name": "FinishedDelivery",
+      "of": "JenkinsBuildFinished",
+      "doc": "is what a VENDOR station is constructed with when a build finishes.",
+      "await": {"mode": "event", "type": "dev.cdevents.build.finished", "anchor": "build"}
+    }
+  ]
+}

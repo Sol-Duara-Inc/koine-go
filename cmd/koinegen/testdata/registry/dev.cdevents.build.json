@@ -1,0 +1,30 @@
+{
+  "namespace": "dev.cdevents.build",
+  "package": "build",
+  "stratum": "floor",
+  "doc": "the community floor for build events: the keys every party in the fleet already agreed on, and not one key more.",
+  "refs": [
+    {"name": "SubjectRef", "doc": "addresses the subject a build event is about."},
+    {"name": "ArtifactRef", "doc": "addresses a built artifact in the record."}
+  ],
+  "types": [
+    {
+      "name": "BuildFinished",
+      "event": "dev.cdevents.build.finished",
+      "doc": "is the community-floor shape of a finished build. It carries community keys only; a vendor key does not exist from here, and that border is the type system rather than a filter.",
+      "fields": [
+        {"name": "Subject", "json": "subject", "type": "ref:SubjectRef", "doc": ""},
+        {"name": "Outcome", "json": "outcome", "type": "outcome", "doc": ""},
+        {"name": "ArtifactID", "json": "artifactId", "type": "ref:ArtifactRef", "doc": ""}
+      ]
+    }
+  ],
+  "deliveries": [
+    {
+      "name": "FinishedDelivery",
+      "of": "BuildFinished",
+      "doc": "is what a FLOOR station is constructed with when a build finishes.",
+      "await": {"mode": "event", "type": "dev.cdevents.build.finished", "anchor": "build"}
+    }
+  ]
+}

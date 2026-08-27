@@ -328,23 +328,56 @@ convention, no second channel. The SDK exposes it through **handles**:
 ```go
 type Handle[T any] interface {
     Received() Ack        // gate on "someone comprehended this" (fast beat)
-    Value() (T, error)    // gate on completion (materializes; blocks the guest;
-                          //   err is the typed outcome variant, never transport)
+    Value() (T, error)    // gate on completion (materializes; waits until the
+                          //   exchange is filled or breached; err is the
+                          //   typed outcome variant, never transport)
 }
 ```
 
-**Branch control by consumption (ratified 2026-07-30) compiles from usage:**
+**Branch control by consumption (ratified 2026-07-30) compiles from usage — two cases, not
+three (owner, 2026-08-27, verbatim, issue #11):**
+
+> Conduit does not process `Detach` in the KoineDSL as something a programmer declares (unless
+> they are writing a workflow YAML or CDrus Expression). I would lose it as a keyword and
+> concept. It will just confuse people.
+
+> Rethink your language design as iterating over connected graphs (they can change and mutate
+> spontaneously, but they always tell you first and you get the new shape), and Conduit will
+> handle the blocking. Most people only want to take an action or run a workflow. Focus there
+> first.
+
+From a station author's side there are only ever two cases — **I waited for this value, or I
+did not**:
 
 - `h.Value()` consumed → **inline**: the exchange runs in the caller's own sequence — the same
   chain.
 - Handle spoken, never consumed → **concurrent (default)**: the host gates this station's
   completion on the exchange's resolution — a **blocking chain**; nothing is silently ungated.
-- `koine.Detach(h)` → **detached, by declaration**: released from the gate, in code, under the
-  author's name — a **detached chain**, the same word as the grammar's keyword.
 
-The three consumption patterns map one-to-one onto the engine's three chain roles
-(`main` / `blocking` / `detached` — the only roles its stored expected graph admits), which is
-what makes the next section's manifest a topology, not a listing.
+Draft 2 held a third case here, `koine.Detach(h)` mapped to a **detached chain**. It is struck.
+`detach:` in a workflow YAML, or a CDrus Expression, declares that *the workflow* has another
+chainId to watch — a new chain with its own runtime expectation, whose resolution does not bear
+on the other chain's. That is a **topology** declaration, and topology belongs to the workflow
+author who writes it — never the station author writing `Resolve`. Putting the same word in this
+SDK dressed a topology fact up as a statement about waiting, which it never was, verified in the
+engine:
+
+```go
+// pkg/reconcile/advance.go:325
+if cr.Terminal != "" || (!run.isActive() && cr.Chain.Role != cdrus.RoleDetached) {
+```
+
+Read the exemption: when a run goes inactive because its main and blocking chains resolved,
+arrivals on a detached chain are still processed normally — the detached chain keeps its own
+clock, its own expectations, and its own END; the parent resolving is not an event in its life,
+and nothing in there was ever a station's decision. `koine.Detach`, `koine.Detachable`, and
+`Broker.Detached` are removed from this SDK; the word stays where it was always earned — the
+grammar the workflow author writes, not the SDK a station author imports.
+
+The two consumption patterns above map onto two of the engine's chain roles — `main` and
+`blocking`, the only roles a station's own consumption can ever produce. The engine's stored
+expected graph admits a third, stored role, minted from workflow topology and never from a
+station's `Resolve`, which is what makes the next section's manifest a topology, not a listing.
 
 ## 7. Registration: the manifest, derived from code
 
@@ -376,10 +409,10 @@ Registration judges in order and **refuses by name, storing nothing on refusal**
 4. Plane: vacuous by construction (§4), re-verified on the manifest for defense in depth
    against hand-built manifests.
 5. Topology: the consumption analysis yields the station's expected exchange graph — inline /
-   blocking / detached per exchange — so the engine can mint proleptic coordinates for the
-   station's work exactly as it does for authored workflows, and the standing budget calculus
-   (a blocked parent's derived budget is the max over sibling chains, the sum within each;
-   detached chains excluded) applies with **no new arithmetic**.
+   blocking per exchange, the two roles a station's own consumption can produce (§6) — so the
+   engine can mint proleptic coordinates for the station's work exactly as it does for authored
+   workflows, and the standing budget calculus (a blocked parent's derived budget is the max
+   over sibling chains, the sum within each) applies with **no new arithmetic**.
 
 **Declared, never ambient (ruled 2026-08-26).** The owner, closing the trusted-tier question:
 teams *"would still have to require their trusted plugin by declaring it via the workflow."*
@@ -413,7 +446,7 @@ authoring test surface:
 out := koinetest.Run(DeploymentSteward{},
         koinetest.Deliver(deployment.ResolvedDelivery{Outcome: koine.Failure /* ... */}),
         koinetest.Exchange("history.last", lastGoodFixture))   // scripted expected responses
-// assert on out.Utterances, out.Exchanges, out.Consumption (inline/concurrent/detached)
+// assert on out.Utterances, out.Exchanges, out.Consumption (inline/concurrent)
 ```
 
 No engine, no sandbox, no network, no daemon — and none of those are offered. An author who
@@ -479,11 +512,12 @@ why (what the build proved), and what it buys. Nothing else in Draft 1 was alter
   the code.
 - **A4 — Consumption patterns ARE chain roles.** Draft 1 said the topology "stays derivable";
   the engine build makes the mapping exact: inline = the caller's own chain, spoken-unconsumed
-  = a blocking chain, `Detach` = a detached chain — the only three roles the engine's stored
-  expected graph admits. Registration therefore yields a proleptic coordinate topology for a
-  station's exchanges, and the engine's existing budget calculus (max over sibling chains, sum
-  within each; detached excluded) applies unchanged. *Buys:* stations get minted coordinates
-  and TTL arithmetic for free; no new calculus, no new tables.
+  = a blocking chain — the two roles a station's own consumption can produce (§6, amended
+  2026-08-27, issue #11, for why a third pattern once lived here and does not now).
+  Registration therefore yields a proleptic coordinate topology for a station's exchanges, and
+  the engine's existing budget calculus (max over sibling chains, sum within each) applies
+  unchanged. *Buys:* stations get minted coordinates and TTL arithmetic for free; no new
+  calculus, no new tables.
 - **A5 — Seat vocabulary unified.** Draft 1 said "capability"; the ruled word is **seat**, and
   the deployment's read surface answers seat states in a ruled three-state vocabulary (`ready`
   / `connect-your-account` / `nobody-connected`). Registration refusals and read-time dark
@@ -521,7 +555,7 @@ stands ratified.
 |---|---|---|
 | E-A | Guest toolchain: standard Go's wasm output is large and goroutine-heavy for the sandbox; TinyGo is lean but restricts reflection (fine — codegen is reflection-free by A6) | **RATIFIED 2026-08-26, amended same day** — TinyGo is the supported guest target ("I know that we are using TinyGo") AND standard Go is expected to work: "my statement about it being present in TinyGo also means I expect it in Go." Both toolchains are supported build targets; the sandbox guest ships via TinyGo. |
 | E-B | Module split | **RATIFIED 2026-08-26** — separate repository, tracker, and issues |
-| E-C | `Value()` blocks the guest while the host brokers the exchange (single-threaded guest) | **RATIFIED 2026-08-26** — "the system must block on values that have not arrived." Acknowledged with it: "the blocking behavior can have weird side effects, but that is why this is a programmer's platform. You have to know how to program asynchronously." The platform does not protect authors from asynchrony; it is honest about it. |
+| E-C | `Value()` gates on completion while the host brokers the exchange (single-threaded guest) | **RATIFIED 2026-08-26, amended 2026-08-27 (issue #11)** — "the system must block on values that have not arrived." Acknowledged with it: "the blocking behavior can have weird side effects, but that is why this is a programmer's platform. You have to know how to program asynchronously." The platform does not protect authors from asynchrony; it is honest about it. **The ruling stands semantically** — a guest must not read past a value that has not arrived — **but "blocks the guest" overstated the mechanism as pinned to this SDK.** Restated: `Value()` **waits until the exchange is filled or breached**. How the host implements that wait (suspend/resume across the guest boundary, versus a literally blocked thread) is Conduit's to carry, not a fact this document pins to a guest; **proving the suspend/resume mechanism is K2's done-condition**, not this one. |
 | E-D | Delivery type assertion in author code vs a generic `Koine[D Delivery]` | **RATIFIED 2026-08-26** — "I would prefer one uniform `[]Koine`": the core stays non-generic; generated typed adapters keep the assertion out of author code (the recommendation stands as ruled — "I prefer that you recommend here because you are writing the code"). |
 | E-E | Observer SDK surface: same module, or a trimmed observer-only module for wide distribution | **RATIFIED 2026-08-26** — one module. See the quarantine concession below. |
 
@@ -555,11 +589,11 @@ no codegen, no wasm.
 typed adapters are K1's codegen, not K0's concern); the
 selector grammar covers typed selectors, anchors, `Resolved()` (either outcome — the resolved
 idiom), `Absent()`; `Contract` with `DefaultAllAwaited`; `Handle[T]` with `Received()`/
-`Value()`; `Detach`; the zero-dependency architecture test passes and FAILS when a third-party
+`Value()`; the zero-dependency architecture test passes and FAILS when a third-party
 import is added (prove once by adding one, watching it fail, removing it).
 
 **Acceptance:** `go build ./... && go vet ./...` clean; `gofmt -l .` empty;
-`go test -race -count=1 -v ./koine/... -run 'TestSelector_|TestContract_|TestHandle_|TestArch_StdlibOnly'`
+`go test -race -count=1 -v ./koine/... -run 'TestSelector_|TestContract_|TestArch_StdlibOnly'`
 green with every name printed. Per E-A as amended (both toolchains supported): a
 `internal/tinygocheck` main package importing `koine` and `koine/selector` compiles under
 TinyGo — `tinygo build -o /dev/null -target wasm-unknown ./internal/tinygocheck` exits 0.
@@ -599,11 +633,11 @@ tries a second export path is refused at load, by name).
 
 ### K3 — exchanges and branching (blocked by: K2)
 
-**Objective:** handle beats end to end; consumption analysis enforced (inline / blocking /
-detached land as the three chain roles); `Detach` released from the completion gate;
-per-seat permission requirements flow from the manifest into the deployment's outbound test.
+**Objective:** handle beats end to end; consumption analysis enforced (inline / blocking land as
+the two chain roles a station's own consumption can produce — §6); per-seat permission
+requirements flow from the manifest into the deployment's outbound test.
 
-**Done when:** the three consumption patterns each produce their chain role in the engine's
+**Done when:** the two consumption patterns each produce their chain role in the engine's
 stored expected graph for a fixture station, and the blocking pattern gates completion (a
 never-answered exchange breaches on the engine's standing budget calculus, not a new one).
 

@@ -13,9 +13,14 @@ import (
 // file in the shipped packages imports the standard library or this module,
 // nothing else. The SDK embeds anywhere Go compiles — TinyGo included — and
 // the dependency answer to any review is one sentence.
+//
+// The list below is every shipped package, and it grows as the SDK does:
+// codec (the reflection-free codec generated strata are written against),
+// manifest (the registration shape), and testing (the author's only test
+// surface) are held to the same law as the core and the grammar.
 func TestArch_StdlibOnly(t *testing.T) {
 	const modulePrefix = "github.com/sol-duara-inc/koine-go/"
-	for _, dir := range []string{".", "selector"} {
+	for _, dir := range []string{".", "selector", "codec", "manifest", "testing"} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatal(err)
