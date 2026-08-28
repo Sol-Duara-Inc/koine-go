@@ -16,11 +16,14 @@ import (
 //
 // The list below is every shipped package, and it grows as the SDK does:
 // codec (the reflection-free codec generated strata are written against),
-// manifest (the registration shape), and testing (the author's only test
-// surface) are held to the same law as the core and the grammar.
+// manifest (the registration shape), testing (the author's only test
+// surface), and wire (the versioned guest contract) are held to the same law
+// as the core and the grammar. wire matters most of all: it is the one
+// package that compiles into a sandboxed guest, and the dependency answer
+// there is not a courtesy, it is the security review.
 func TestArch_StdlibOnly(t *testing.T) {
 	const modulePrefix = "github.com/sol-duara-inc/koine-go/"
-	for _, dir := range []string{".", "selector", "codec", "manifest", "testing"} {
+	for _, dir := range []string{".", "selector", "codec", "manifest", "testing", "wire"} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatal(err)

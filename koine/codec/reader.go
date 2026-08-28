@@ -120,6 +120,48 @@ func (r *Reader) Int() (int, error) {
 	return n, nil
 }
 
+// Uint64 reads a JSON number that names a whole non-negative number.
+func (r *Reader) Uint64() (uint64, error) {
+	lit, err := r.number()
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.ParseUint(lit, 10, 64)
+	if err != nil {
+		return 0, r.fail("expected a whole non-negative number, got " + lit)
+	}
+	return n, nil
+}
+
+// Array reads a JSON array, handing each element to elem in document order.
+// elem must consume exactly one value.
+func (r *Reader) Array(elem func(*Reader) error) error {
+	if err := r.expect('['); err != nil {
+		return err
+	}
+	r.space()
+	if r.peek() == ']' {
+		r.pos++
+		return nil
+	}
+	for {
+		r.space()
+		if err := elem(r); err != nil {
+			return err
+		}
+		r.space()
+		switch r.peek() {
+		case ',':
+			r.pos++
+		case ']':
+			r.pos++
+			return nil
+		default:
+			return r.fail("expected ',' or ']'")
+		}
+	}
+}
+
 // Bool reads true or false.
 func (r *Reader) Bool() (bool, error) {
 	r.space()
@@ -130,6 +172,22 @@ func (r *Reader) Bool() (bool, error) {
 		return false, nil
 	}
 	return false, r.fail("expected true or false")
+}
+
+// Raw captures the value at the current position verbatim, without reading
+// into it. It is how a frame carries a payload it does not own: the wire
+// moves a station's projected facts and a fulfiller's answer across the
+// boundary without ever parsing them, because parsing them is the stratum's
+// job and the wire has no business knowing a stratum's shape.
+func (r *Reader) Raw() ([]byte, error) {
+	r.space()
+	start := r.pos
+	if err := r.Skip(); err != nil {
+		return nil, err
+	}
+	out := make([]byte, r.pos-start)
+	copy(out, r.data[start:r.pos])
+	return out, nil
 }
 
 // Skip discards the value at the current position, whatever its shape.

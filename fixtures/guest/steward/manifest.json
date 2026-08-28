@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "koine.manifest/1",
+  "kind": "station",
+  "claim": {
+    "group": "payment-engineering",
+    "author": "mchen",
+    "name": "deployment-steward"
+  },
+  "events": [
+    {
+      "type": "dev.cdevents.deployment.recorded",
+      "direction": "emit",
+      "reconciliation": {
+        "declared": false
+      }
+    },
+    {
+      "type": "dev.cdevents.deployment.requested",
+      "direction": "emit",
+      "reconciliation": {
+        "declared": false
+      }
+    }
+  ],
+  "koine": {
+    "stratum": "observer",
+    "lineage": [
+      "dev.cdevents.deployment"
+    ],
+    "complete": "all-awaited",
+    "awaits": [
+      {
+        "type": "dev.cdevents.deployment",
+        "mode": "resolved",
+        "anchor": "deploy",
+        "hash": "sha256:2df95742784d7474d12140bf220cb522a2f3919f8e49b25294fa3c06635f3c11"
+      }
+    ],
+    "emits": [
+      {
+        "go": "deployment.DeploymentRecorded",
+        "type": "dev.cdevents.deployment.recorded",
+        "namespace": "dev.cdevents.deployment"
+      },
+      {
+        "go": "deployment.Deploy",
+        "type": "dev.cdevents.deployment.requested",
+        "namespace": "dev.cdevents.deployment"
+      }
+    ],
+    "exchanges": [
+      {
+        "seat": "history",
+        "name": "history.last",
+        "consumption": "inline",
+        "chainRole": "main",
+        "returns": "dev.cdevents.deployment.finished",
+        "permissions": [
+          "record:read"
+        ]
+      }
+    ],
+    "seats": [
+      {
+        "seat": "history",
+        "tool": "record",
+        "connection": "record-query",
+        "permissions": [
+          "record:read"
+        ]
+      }
+    ]
+  }
+}

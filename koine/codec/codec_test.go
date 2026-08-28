@@ -142,3 +142,120 @@ func TestCodec_MalformedInputIsRefusedByName(t *testing.T) {
 		}
 	}
 }
+
+// TestCodec_RawCarriesAValueWithoutReadingIt pins how a frame moves a
+// payload it does not own. The wire carries a station's projected facts and
+// a fulfiller's answer across the boundary without parsing them, because
+// their shape belongs to a stratum and the wire has no business knowing a
+// stratum's shape.
+func TestCodec_RawCarriesAValueWithoutReadingIt(t *testing.T) {
+	const doc = `{"facts":{"a":[1,{"b":"}"},null],"n":-1.5e3},"after":"kept"}`
+	var facts []byte
+	var after string
+	err := codec.DecodeObject([]byte(doc), func(key string, r *codec.Reader) (bool, error) {
+		switch key {
+		case "facts":
+			v, err := r.Raw()
+			facts = v
+			return true, err
+		case "after":
+			v, err := r.String()
+			after = v
+			return true, err
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"a":[1,{"b":"}"},null],"n":-1.5e3}`
+	if string(facts) != want {
+		t.Fatalf("captured\n  %s\nwant\n  %s", facts, want)
+	}
+	if after != "kept" {
+		t.Fatalf("the reader lost its place after a raw capture: %q", after)
+	}
+
+	// Raw copies. A caller that keeps the bytes keeps them, whatever
+	// happens to the document afterwards.
+	source := []byte(`{"x":{"deep":1}}`)
+	var held []byte
+	if err := codec.DecodeObject(source, func(key string, r *codec.Reader) (bool, error) {
+		v, err := r.Raw()
+		held = v
+		return true, err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range source {
+		source[i] = ' '
+	}
+	if string(held) != `{"deep":1}` {
+		t.Fatalf("a raw capture aliased its source: %q", held)
+	}
+}
+
+// TestCodec_Uint64SurvivesItsWholeRange pins the number a token rides on.
+// The wire never sends a number it has to round.
+func TestCodec_Uint64SurvivesItsWholeRange(t *testing.T) {
+	for _, v := range []uint64{0, 1, 1 << 53, 1<<64 - 1} {
+		var w codec.Writer
+		w.BeginObject()
+		w.Key("token")
+		w.Uint64(v)
+		w.EndObject()
+
+		var got uint64
+		if err := codec.DecodeObject(w.Bytes(), func(key string, r *codec.Reader) (bool, error) {
+			n, err := r.Uint64()
+			got = n
+			return true, err
+		}); err != nil {
+			t.Fatalf("%d: %v", v, err)
+		}
+		if got != v {
+			t.Errorf("%d round-tripped to %d", v, got)
+		}
+	}
+	// A negative number is not a token, and saying so beats truncating.
+	err := codec.DecodeObject([]byte(`{"token":-1}`), func(key string, r *codec.Reader) (bool, error) {
+		_, err := r.Uint64()
+		return true, err
+	})
+	if err == nil {
+		t.Error("a negative token was read")
+	}
+}
+
+// TestCodec_ArrayReadsElementsInOrder pins the one container the frames
+// need: an exchange's arguments, in the order the author wrote them.
+func TestCodec_ArrayReadsElementsInOrder(t *testing.T) {
+	var got []string
+	err := codec.DecodeObject([]byte(`{"args":["a","b","c"],"empty":[]}`), func(key string, r *codec.Reader) (bool, error) {
+		if key != "args" && key != "empty" {
+			return false, nil
+		}
+		return true, r.Array(func(r *codec.Reader) error {
+			v, err := r.String()
+			if err != nil {
+				return err
+			}
+			got = append(got, v)
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, "") != "abc" {
+		t.Fatalf("elements arrived as %v", got)
+	}
+
+	// A malformed array is refused by name like everything else here.
+	err = codec.DecodeObject([]byte(`{"args":["a" "b"]}`), func(key string, r *codec.Reader) (bool, error) {
+		return true, r.Array(func(r *codec.Reader) error { _, err := r.String(); return err })
+	})
+	if err == nil || !strings.HasPrefix(err.Error(), "koine/codec: ") {
+		t.Fatalf("a malformed array was read: %v", err)
+	}
+}

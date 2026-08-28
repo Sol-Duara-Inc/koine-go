@@ -195,22 +195,21 @@ func handleTypeName(t *Type) string { return "handle" + t.Name }
 func (g *generator) writeHandle(b *strings.Builder, t *Type) {
 	name := handleTypeName(t)
 	comment(b, name+" gates on an exchange answering with "+t.Name+".")
-	fmt.Fprintf(b, "type %s struct {\n\tbroker   koine.Broker\n\texchange koine.Exchange\n\tanswer   *koine.Answer\n}\n\n", name)
+	fmt.Fprintf(b, "type %s struct {\n\tbroker   koine.Broker\n\texchange koine.Exchange\n\ttoken    koine.Token\n}\n\n", name)
 
-	comment(b, "speak utters the intent once. With no host below the station it panics: an exchange never fails silently, and a nil answer is not an answer.")
+	comment(b, "speak utters the intent and waits on nothing: the utterance leaves at the call site and the token names the exchange the host opened. With no host below the station it panics — an exchange never fails silently, and a token nobody minted is not a token.")
 	fmt.Fprintf(b, "func (h *%s) speak() {\n", name)
-	b.WriteString("\tif h.answer != nil {\n\t\treturn\n\t}\n")
 	b.WriteString("\tif h.broker == nil {\n\t\tpanic(\"koine: \" + h.exchange.Name + \" spoke with no host below this station — an exchange never fails silently\")\n\t}\n")
-	b.WriteString("\ta := h.broker.Speak(h.exchange)\n\th.answer = &a\n}\n\n")
+	b.WriteString("\th.token = h.broker.Speak(h.exchange)\n}\n\n")
 
-	comment(b, "Received is the fast beat: someone who declared comprehension has this now.")
-	fmt.Fprintf(b, "func (h *%s) Received() koine.Ack {\n\th.speak()\n\treturn koine.Ack{By: h.answer.By}\n}\n\n", name)
+	comment(b, "Received is the fast beat: someone who declared comprehension has this now. A zero Ack is an honest not-yet, never an error.")
+	fmt.Fprintf(b, "func (h *%s) Received() koine.Ack {\n\treturn h.broker.Received(h.token)\n}\n\n", name)
 
-	comment(b, "Value gates on completion and materializes the answer. The error is the typed outcome variant of the expected response, never transport — branch on it, don't defend against it.")
+	comment(b, "Value waits until the exchange is filled or breached, and materializes the answer. Asking for it is what makes this exchange inline. The error is the typed outcome variant of the expected response, never transport — branch on it, don't defend against it.")
 	fmt.Fprintf(b, "func (h *%s) Value() (%s, error) {\n", name, t.Name)
-	fmt.Fprintf(b, "\th.speak()\n\th.broker.Consumed(h.exchange)\n\tvar v %s\n", t.Name)
-	b.WriteString("\tif h.answer.Err != nil {\n\t\treturn v, h.answer.Err\n\t}\n")
-	b.WriteString("\tif len(h.answer.JSON) == 0 {\n\t\treturn v, nil\n\t}\n")
-	b.WriteString("\tif err := v.UnmarshalJSON(h.answer.JSON); err != nil {\n\t\treturn v, err\n\t}\n")
+	fmt.Fprintf(b, "\ta := h.broker.Await(h.token)\n\tvar v %s\n", t.Name)
+	b.WriteString("\tif a.Err != nil {\n\t\treturn v, a.Err\n\t}\n")
+	b.WriteString("\tif len(a.JSON) == 0 {\n\t\treturn v, nil\n\t}\n")
+	b.WriteString("\tif err := v.UnmarshalJSON(a.JSON); err != nil {\n\t\treturn v, err\n\t}\n")
 	b.WriteString("\treturn v, nil\n}\n\n")
 }

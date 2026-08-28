@@ -57,6 +57,13 @@ func (w *Writer) Int(i int) {
 	w.buf = strconv.AppendInt(w.buf, int64(i), 10)
 }
 
+// Uint64 writes an unsigned JSON number. Tokens and counts ride this way;
+// the wire never sends a number it has to round.
+func (w *Writer) Uint64(v uint64) {
+	w.valueSep()
+	w.buf = strconv.AppendUint(w.buf, v, 10)
+}
+
 // Bool writes true or false.
 func (w *Writer) Bool(b bool) {
 	w.valueSep()

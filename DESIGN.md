@@ -184,13 +184,24 @@ thing. But that is no different than how any code works" (owner, 2026-08-23).
 github.com/sol-duara-inc/koine-go        # THIS repository — the SDK authors import
   koine/          — core contract types, Base stations, registration; ZERO dependencies
   koine/selector/ — awaits grammar (selectors, anchors, resolved(), absent())
+  koine/codec/    — the reflection-free JSON codec generated strata are written
+                    against, so the guest target stays open (A6)              [K1]
+  koine/manifest/ — the §7 registration manifest's shape and vocabulary       [K1]
   koine/testing/  — the pure-Resolve test harness (the author's ONLY test surface)
+  koine/wire/     — the versioned guest↔host contract: frames, ABI names, the
+                    guest runtime. The ONLY coupling with the engine          [K2]
   cmd/koinegen/   — codegen: schema registry → data strata; manifest extraction
+  fixtures/guest/ — the conformance guests the engine loads: the §10 steward,
+                    and the negative fixture it must refuse by name           [K2]
 
 github.com/solduara/conduit-go           # the engine (existing, separate tracker)
   pkg/koinehost/  — host-side runtime: guest loader, host functions, forming,
                     auto-emission, exchange broker, registration validator
 ```
+
+Every package above imports the standard library and this module only, and an architecture
+test enforces it (A6). The bracketed phase is the one that added the directory; the four
+without a bracket are K0's.
 
 The coupling between the two repositories is exactly one thing: **the wire and host-function
 contract**, versioned in this repository (`koine/wire`) and conformance-gated on both sides

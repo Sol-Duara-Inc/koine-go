@@ -6,22 +6,33 @@ they **await**, arrivals **store** until the shape of complete is satisfied, and
 credentials, storage-by-emission) belongs to the host engine and is structurally unreachable
 from author code.
 
-**Status:** K0 (the contracts) and K1 (codegen, the manifest, the harness) have landed.
+**Status:** K0 (the contracts), K1 (codegen, the manifest, the harness) and K2's SDK half
+(the versioned wire contract and the guest fixtures) have landed.
 [DESIGN.md](DESIGN.md) is the whole document — the transcribed semantics, the contract types,
 the amendments from the engine build, the open-decision ledger, and the build phases that
 become this repository's issues.
 
 ```
-koine/          the contract types, the base stations, the handles     — stdlib only
-koine/selector/ the awaits grammar                                     — stdlib only
+koine/          the contract types, the base stations, the handles
+koine/selector/ the awaits grammar
 koine/codec/    the reflection-free codec generated strata are written against
 koine/manifest/ the registration manifest's shape (derived, never hand-written)
 koine/testing/  the pure-Resolve harness — the author's only test surface
+koine/wire/     the versioned guest contract — the one coupling with the engine
 cmd/koinegen/   the schema registry to data strata, and the manifest extractor
+fixtures/guest/ the conformance guests the engine loads, built with TinyGo
 ```
 
-Regenerate the committed fixtures with `go generate ./cmd/koinegen/fixtures/`; a full
-regeneration must produce zero diff.
+Every package imports the standard library and this module only — no `go.sum`, no third-party
+anything — and an architecture test fails the build if that ever stops being true.
+
+Regenerate the committed fixtures with `go generate ./cmd/koinegen/fixtures/` and
+`go generate ./fixtures/guest/...`; a full regeneration must produce zero diff. Build a guest
+the way the engine does:
+
+```
+tinygo build -o steward.wasm -target wasm-unknown ./fixtures/guest/steward
+```
 
 KoineDSL is public — this is its Go rendering, and the what and why of the Sol Duara demo.
 
