@@ -31,8 +31,13 @@ func TestManifest_WorkedExampleNamesItsIdentityAwaitEmitsAndInlineExchange(t *te
 	if m.SchemaVersion != manifest.SchemaVersion || m.Kind != "station" {
 		t.Errorf("manifest is %s/%s", m.SchemaVersion, m.Kind)
 	}
-	if m.Claim != (manifest.Claim{Group: "payment-engineering", Author: "mchen", Name: "deployment-steward"}) {
-		t.Errorf("claim = %#v", m.Claim)
+	if m.Identity != (manifest.Identity{Group: "payment-engineering", Author: "mchen", Name: "deployment-steward"}) {
+		t.Errorf("identity = %#v", m.Identity)
+	}
+	// The claim the loader reads is the stratum this station speaks from,
+	// in the reverse-domain shape the loader holds a claim to.
+	if m.Claim != "dev.cdevents.deployment" {
+		t.Errorf("claim = %q", m.Claim)
 	}
 	if m.Koine.Stratum != "observer" {
 		t.Errorf("stratum = %q — the steward embeds ObserverBase", m.Koine.Stratum)
@@ -40,8 +45,8 @@ func TestManifest_WorkedExampleNamesItsIdentityAwaitEmitsAndInlineExchange(t *te
 	if got := strings.Join(m.Koine.Lineage, ","); got != "dev.cdevents.deployment" {
 		t.Errorf("lineage = %q", got)
 	}
-	if m.Koine.Complete != "all-awaited" {
-		t.Errorf("complete = %q", m.Koine.Complete)
+	if m.Complete != "all-awaited" {
+		t.Errorf("complete = %q", m.Complete)
 	}
 
 	if len(m.Koine.Awaits) != 1 {
@@ -64,8 +69,20 @@ func TestManifest_WorkedExampleNamesItsIdentityAwaitEmitsAndInlineExchange(t *te
 			t.Errorf("the manifest does not name emit %q", want)
 		}
 	}
-	if len(m.Events) != len(m.Koine.Emits) {
-		t.Errorf("the engine family's events (%d) and the Koine emits (%d) disagree", len(m.Events), len(m.Koine.Emits))
+	if len(m.Koine.Events) != len(m.Koine.Emits) {
+		t.Errorf("the declared events (%d) and the Koine emits (%d) disagree", len(m.Koine.Events), len(m.Koine.Emits))
+	}
+	// The short forms the loader reads and the long forms below the line
+	// are one fact said twice, from one source: they cannot disagree.
+	if len(m.Emits) != len(m.Koine.Emits) || len(m.Awaits) != len(m.Koine.Awaits) ||
+		len(m.Exchanges) != len(m.Koine.Exchanges) {
+		t.Errorf("the loader's lists and the Koine section disagree: %#v", m)
+	}
+	if strings.Join(m.Awaits, ",") != "dev.cdevents.deployment" {
+		t.Errorf("awaits = %v", m.Awaits)
+	}
+	if strings.Join(m.Exchanges, ",") != "history.last" {
+		t.Errorf("exchanges = %v", m.Exchanges)
 	}
 
 	if len(m.Koine.Exchanges) != 1 {

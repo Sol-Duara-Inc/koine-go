@@ -1,7 +1,7 @@
 package wire_test
 
 import (
-	"strconv"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -13,98 +13,96 @@ import (
 )
 
 // scriptHost is a host written from a script: it records what the guest said
-// and answers what the test told it to. It is not a mock of the semantics —
-// there are no semantics on this side of the boundary, only frames — which
-// is exactly why the guest runtime can be driven here at all.
+// and answers what the test told it to, in the host's own conventions. It is
+// not a mock of the semantics — there are no semantics on this side of the
+// boundary, only frames — which is why the guest runtime can be driven here
+// at all. Whether these conventions ARE the host's is the conformance
+// module's question, not this one's.
 type scriptHost struct {
-	// what the guest said
-	yields    []wire.YieldFrame
+	yields    []map[string]any
 	exchanges []wire.ExchangeFrame
 	ackPolls  int
 	valPolls  int
+	logs      []string
 
 	// what this host answers
-	cancelAt  int // 1-based yield to refuse; 0 refuses nothing
-	token     uint64
-	openErr   string
-	pendings  int // value polls answered "pending" before the real answer
-	value     wire.ValueFrame
-	ackAfter  int // ack polls answered "pending" before "received"
-	ackBy     string
-	badFrames bool
-	noToken   bool // open the exchange with no token at all
+	yieldCode  uint32 // the host's code; zero is success
+	failYieldN int    // 1-based yield to fail; 0 fails none
+	handle     uint64
+	noHandle   bool
+	acked      bool
+	answer     wire.AnswerFrame
+	emptyValue bool
+	badValue   bool
 }
 
-func (h *scriptHost) Yield(frame []byte) bool {
-	f, err := wire.DecodeYield(frame)
-	if err != nil {
+func (h *scriptHost) Yield(frame []byte) uint32 {
+	var spoke map[string]any
+	if err := json.Unmarshal(frame, &spoke); err != nil {
 		panic("the guest sent an unreadable yield frame: " + err.Error())
 	}
-	h.yields = append(h.yields, f)
-	return h.cancelAt == 0 || len(h.yields) != h.cancelAt
+	h.yields = append(h.yields, spoke)
+	if h.failYieldN != 0 && len(h.yields) == h.failYieldN {
+		return 1
+	}
+	return h.yieldCode
 }
 
-func (h *scriptHost) Exchange(frame []byte) []byte {
+func (h *scriptHost) Exchange(frame []byte) uint64 {
 	f, err := wire.DecodeExchange(frame)
 	if err != nil {
 		panic("the guest sent an unreadable exchange frame: " + err.Error())
 	}
 	h.exchanges = append(h.exchanges, f)
-	if h.badFrames {
-		return []byte(`{"wire":"koine.wire/99"}`)
+	if h.noHandle {
+		return 0
 	}
-	token := h.token
-	if token == 0 && h.openErr == "" && !h.noToken {
-		token = uint64(len(h.exchanges))
+	if h.handle != 0 {
+		return h.handle
 	}
-	return mustRender(wire.OpenedFrame{Wire: wire.Version, Token: token, Err: h.openErr})
+	return uint64(len(h.exchanges))
 }
 
-func (h *scriptHost) AckPoll(uint64) []byte {
+func (h *scriptHost) AckPoll(uint64) uint32 {
 	h.ackPolls++
-	state, by := wire.StateReceived, h.ackBy
-	if h.ackPolls <= h.ackAfter {
-		state, by = wire.StatePending, ""
+	if h.acked {
+		return 1
 	}
-	return mustRender(wire.AckFrame{Wire: wire.Version, State: state, By: by})
+	return 0
 }
 
 func (h *scriptHost) ValuePoll(uint64) []byte {
 	h.valPolls++
-	if h.valPolls <= h.pendings {
-		return mustRender(wire.ValueFrame{Wire: wire.Version, State: wire.StatePending})
+	switch {
+	case h.emptyValue:
+		return nil
+	case h.badValue:
+		return []byte(`{"status":`)
 	}
-	v := h.value
-	v.Wire = wire.Version
-	if v.State == "" {
-		// A host that was given no script still answers something a
-		// conforming guest can read, so a test that is not about waiting
-		// never trips over the wait.
-		v.State = wire.StateFilled
+	a := h.answer
+	if a.Status == 0 && !a.Breach() && len(a.Value) == 0 {
+		a.Status = 200
+		a.Value = []byte(`{}`)
 	}
-	return mustRender(v)
-}
-
-// mustRender builds an answer frame for the script host. A frame this
-// package just built failing to render itself is a bug in this package, not
-// a condition a test has to carry.
-func mustRender(f interface{ MarshalJSON() ([]byte, error) }) []byte {
-	data, err := f.MarshalJSON()
+	data, err := a.MarshalJSON()
 	if err != nil {
-		panic("koine/wire test: a frame could not render itself: " + err.Error())
+		panic(err)
 	}
 	return data
 }
 
-func stewardDelivery(facts string) []byte {
+func (h *scriptHost) Log(msg string) { h.logs = append(h.logs, msg) }
+
+func stewardDelivery(event string) []byte {
 	frame, err := wire.DeliveryFrame{
-		Wire:    wire.Version,
-		Station: "deployment-steward",
-		Chain:   "chain/7",
-		Actor:   "sub:mchen;act:conduit",
-		Anchor:  "deploy",
-		Type:    "dev.cdevents.deployment.finished",
-		Facts:   []byte(facts),
+		Version:   wire.Version,
+		Event:     []byte(event),
+		EventType: "dev.cdevents.deployment.finished",
+		Subject:   "payments-api",
+		RunID:     "run-1",
+		ChainID:   "chain-7",
+		Actor:     "sub:mchen;act:conduit",
+		Context:   map[string]string{wire.ContextAnchor: "deploy"},
 	}.MarshalJSON()
 	if err != nil {
 		panic(err)
@@ -118,10 +116,10 @@ const failedDeployment = `{"subject":"payments-api","outcome":"failure",` +
 func stewardStation(k koine.Koine) wire.Station {
 	return wire.Station{
 		Koine:    k,
-		Manifest: []byte(`{"schemaVersion":"koine.manifest/1"}`),
+		Manifest: []byte(`{"identity":{"name":"deployment-steward"}}`),
 		Decode: func(f wire.DeliveryFrame) (koine.Delivery, error) {
 			var d deployment.ResolvedDelivery
-			if err := d.UnmarshalJSON(f.Facts); err != nil {
+			if err := d.UnmarshalJSON(f.Event); err != nil {
 				return nil, err
 			}
 			return d, nil
@@ -129,22 +127,15 @@ func stewardStation(k koine.Koine) wire.Station {
 	}
 }
 
-// TestWire_TheGuestResolvesADeliveryAndYields is the end-to-end shape K2
-// exists to prove, driven off-target: the host hands over a projected
-// delivery, the station resolves, speaks an exchange, waits for the answer,
-// and yields what follows from it. The station body is the §10 steward,
-// unmodified — the same body the extractor reads and the harness drives.
+// TestWire_TheGuestResolvesADeliveryAndYields is the end-to-end shape driven
+// off-target: the host hands over a projected delivery, the station
+// resolves, speaks an exchange, waits for the answer, and yields what
+// follows from it. The station body is the §10 steward, unmodified.
 func TestWire_TheGuestResolvesADeliveryAndYields(t *testing.T) {
 	host := &scriptHost{
-		pendings: 2,
-		value: wire.ValueFrame{
-			State: wire.StateFilled,
-			By:    "sub:history-fulfiller",
-			Body:  []byte(`{"artifactId":"sha256:good"}`),
-		},
+		answer: wire.AnswerFrame{Status: 200, Value: []byte(`{"artifactId":"sha256:good"}`)},
 	}
-	steward := &station.DeploymentSteward{}
-	guest := wire.New(stewardStation(steward), host)
+	guest := wire.New(stewardStation(&station.DeploymentSteward{}), host)
 
 	if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
 		t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
@@ -154,74 +145,135 @@ func TestWire_TheGuestResolvesADeliveryAndYields(t *testing.T) {
 		t.Fatalf("the guest spoke %d exchanges, want one", len(host.exchanges))
 	}
 	ex := host.exchanges[0]
-	if ex.Seat != "history" || ex.Name != "history.last" {
+	if ex.Type != "history.last" {
 		t.Errorf("exchange = %#v", ex)
 	}
-	if len(ex.Args) != 1 || ex.Args[0].Name != "outcome" || ex.Args[0].Value != "success" {
-		t.Errorf("the intent carried %#v", ex.Args)
+	if ex.Outcome != "success" {
+		t.Errorf("the intent asked for outcome %q", ex.Outcome)
+	}
+	if host.valPolls != 1 {
+		t.Errorf("the guest asked for the value %d times; the host's own poll waits", host.valPolls)
 	}
 
 	if len(host.yields) != 1 {
 		t.Fatalf("the guest yielded %d times, want one: %#v", len(host.yields), host.yields)
 	}
 	y := host.yields[0]
-	if y.Wire != wire.Version {
-		t.Errorf("the yield frame declared %q", y.Wire)
+	if y["type"] != "dev.cdevents.deployment.requested" {
+		t.Errorf("the guest yielded %v", y["type"])
 	}
-	if y.Type != "dev.cdevents.deployment.requested" {
-		t.Errorf("the guest yielded %q", y.Type)
+	if y["artifact"] != "sha256:good" {
+		t.Errorf("the deploy did not carry the last good artifact: %v", y["artifact"])
 	}
-	const wantBody = `{"artifact":"sha256:good","target":"prod"}`
-	if string(y.Body) != wantBody {
-		t.Errorf("the guest yielded\n  %s\nwant\n  %s", y.Body, wantBody)
+	if y["target"] != "prod" {
+		t.Errorf("the deploy targeted %v", y["target"])
 	}
 }
 
-// TestWire_ValueWaitsUntilFilledOrBreached pins E-C as amended: the guest
-// keeps asking until there is news. The loop is deliberately the dumbest
-// possible guest, which is what leaves the mechanism to the host — a host
-// that suspends and resumes across the boundary never answers "pending" at
-// all, and this test is what proves the guest tolerates one that does.
-func TestWire_ValueWaitsUntilFilledOrBreached(t *testing.T) {
-	t.Run("filled after waiting", func(t *testing.T) {
-		host := &scriptHost{
-			pendings: 5,
-			value: wire.ValueFrame{
-				State: wire.StateFilled,
-				Body:  []byte(`{"artifactId":"sha256:good"}`),
-			},
-		}
-		guest := wire.New(stewardStation(&station.DeploymentSteward{}), host)
+// TestWire_ZeroIsSuccessOnTheYieldPath pins the polarity in both directions.
+// The host answers ZERO for success; reading that backwards would turn every
+// stored emission into a cancellation, silently, without ever raising an
+// error — which is exactly the kind of break a version number cannot catch
+// and a test in one repository will not see.
+func TestWire_ZeroIsSuccessOnTheYieldPath(t *testing.T) {
+	t.Run("zero carries on", func(t *testing.T) {
+		host := &scriptHost{yieldCode: 0}
+		guest := wire.New(stewardStation(&twoSpeaker{}), host)
 		if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
 			t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
 		}
-		if host.valPolls != 6 {
-			t.Errorf("the guest asked %d times, want 6 — five pending and the answer", host.valPolls)
-		}
-		if string(host.yields[0].Body) != `{"artifact":"sha256:good","target":"prod"}` {
-			t.Errorf("the guest read past a value that had not arrived: %s", host.yields[0].Body)
+		if len(host.yields) != 2 {
+			t.Fatalf("the body spoke twice; the host heard %d", len(host.yields))
 		}
 	})
 
-	t.Run("breached is a typed variant, never transport", func(t *testing.T) {
-		host := &scriptHost{
-			pendings: 1,
-			value:    wire.ValueFrame{State: wire.StateBreached, Err: "no-deployment-of-this-subject-ever-succeeded"},
-		}
-		guest := wire.New(stewardStation(&variantSpeaker{}), host)
-		if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
+	t.Run("non-zero cancels, and nothing after it is spoken", func(t *testing.T) {
+		host := &scriptHost{failYieldN: 1}
+		guest := wire.New(stewardStation(&twoSpeaker{}), host)
+		if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Cancelled {
 			t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
 		}
 		if len(host.yields) != 1 {
-			t.Fatalf("the breach branch yielded %d times", len(host.yields))
-		}
-		// The station branched on the variant and spoke its name: the
-		// error crossed the boundary as domain truth, not as a transport
-		// complaint the author would have to defend against.
-		if !strings.Contains(string(host.yields[0].Body), "no-deployment-of-this-subject-ever-succeeded") {
-			t.Errorf("the variant did not reach the body: %s", host.yields[0].Body)
+			t.Fatalf("the host refused the first yield and still heard %d", len(host.yields))
 		}
 	})
+
+	// Every non-zero code the host can answer means the same thing: it
+	// could not take the utterance.
+	for _, code := range []uint32{1, 2, 3} {
+		host := &scriptHost{yieldCode: code}
+		guest := wire.New(stewardStation(&twoSpeaker{}), host)
+		if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Cancelled {
+			t.Errorf("host code %d ended %s, want cancelled", code, got)
+		}
+	}
+}
+
+// twoSpeaker speaks twice, so a refusal has something after it to suppress.
+type twoSpeaker struct{ koine.ObserverBase }
+
+func (twoSpeaker) Identity() koine.Identity {
+	return koine.Identity{Group: "payment-engineering", Author: "mchen", Name: "deployment-steward"}
+}
+func (twoSpeaker) Awaits() []selector.Selector { return selector.List(deployment.Resolved()) }
+func (twoSpeaker) Complete() koine.Contract    { return koine.DefaultAllAwaited }
+func (twoSpeaker) Resolve(d koine.Delivery, yield koine.Yield) {
+	dep := d.(deployment.ResolvedDelivery)
+	yield(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
+	yield(deployment.Deploy{Artifact: dep.ArtifactID, Target: dep.Environment})
+}
+
+// TestWire_AwaitIsOneCallBecauseTheHostWaits pins where the waiting lives.
+// The host's value_poll does not return until the exchange has gone one way
+// or the other, so the guest asks once. A poll loop here would be this SDK
+// inventing a mechanism the ruling left to Conduit (E-C, amended).
+func TestWire_AwaitIsOneCallBecauseTheHostWaits(t *testing.T) {
+	host := &scriptHost{answer: wire.AnswerFrame{Status: 200, Value: []byte(`{"artifactId":"sha256:good"}`)}}
+	guest := wire.New(stewardStation(&station.DeploymentSteward{}), host)
+	if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
+		t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
+	}
+	if host.valPolls != 1 {
+		t.Fatalf("the guest asked %d times for one value", host.valPolls)
+	}
+}
+
+// TestWire_ABreachIsATypedVariantNeverTransport pins that the error a body
+// branches on is the future having gone the other way, carrying the host's
+// own words.
+func TestWire_ABreachIsATypedVariantNeverTransport(t *testing.T) {
+	host := &scriptHost{answer: wire.AnswerFrame{
+		Status: 404, Error: "no deployment of this subject has ever succeeded", Breached: true,
+	}}
+	guest := wire.New(stewardStation(&variantSpeaker{}), host)
+	if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
+		t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
+	}
+	if len(host.yields) != 1 {
+		t.Fatalf("the breach branch yielded %d times", len(host.yields))
+	}
+	if host.yields[0]["artifact"] != "no deployment of this subject has ever succeeded" {
+		t.Errorf("the variant did not reach the body: %v", host.yields[0])
+	}
+
+	// A breach the host named without setting the flag is the same fact.
+	unflagged := &scriptHost{answer: wire.AnswerFrame{Status: 500, Error: "gone"}}
+	if got := wire.New(stewardStation(&variantSpeaker{}), unflagged).Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
+		t.Fatalf("deliver = %s", got)
+	}
+	if unflagged.yields[0]["artifact"] != "gone" {
+		t.Errorf("an unflagged breach read as filled: %v", unflagged.yields[0])
+	}
+
+	// A breach with a status and no words still reads as a breach, and
+	// says what it can.
+	silent := &scriptHost{answer: wire.AnswerFrame{Status: 504, Breached: true}}
+	if got := wire.New(stewardStation(&variantSpeaker{}), silent).Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
+		t.Fatalf("deliver = %s", got)
+	}
+	if !strings.Contains(silent.yields[0]["artifact"].(string), "504") {
+		t.Errorf("a wordless breach said %v", silent.yields[0])
+	}
 }
 
 // variantSpeaker branches on the typed outcome variant and speaks its name,
@@ -244,28 +296,38 @@ func (variantSpeaker) Resolve(d koine.Delivery, yield koine.Yield) {
 }
 
 // TestWire_ReceivedIsTheFastBeatAndPendingIsAnHonestNotYet pins the other
-// half of the Handle contract. Nothing is an error here: only the party who
-// declared comprehension receives, and they may simply not have received
-// yet.
+// half of the Handle contract, including the honest limit of wire v1: the
+// host's ack carries no comprehender, so the only party the guest can name
+// is the one that did acknowledge.
 func TestWire_ReceivedIsTheFastBeatAndPendingIsAnHonestNotYet(t *testing.T) {
-	host := &scriptHost{ackAfter: 1, ackBy: "sub:history-fulfiller", value: wire.ValueFrame{State: wire.StateFilled}}
-	guest := wire.New(stewardStation(&beatWatcher{}), host)
-	if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
-		t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
+	for _, c := range []struct {
+		name  string
+		acked bool
+		want  koine.ActorRef
+	}{
+		{"not yet", false, ""},
+		{"acknowledged", true, wire.AckBroker},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			host := &scriptHost{acked: c.acked}
+			guest := wire.New(stewardStation(&beatWatcher{}), host)
+			if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
+				t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
+			}
+			if host.ackPolls != 1 {
+				t.Fatalf("the guest asked the fast beat %d times", host.ackPolls)
+			}
+			if got := host.yields[0]["artifact"]; got != string(c.want) {
+				t.Fatalf("the beat read as %q, want %q", got, c.want)
+			}
+		})
 	}
-	if host.ackPolls != 2 {
-		t.Fatalf("the guest asked the fast beat %d times, want 2", host.ackPolls)
-	}
-	if len(host.yields) != 1 {
-		t.Fatalf("yielded %d times", len(host.yields))
-	}
-	const want = `{"artifact":"pending-then-sub:history-fulfiller"}`
-	if string(host.yields[0].Body) != want {
-		t.Fatalf("the beats read as %s, want %s", host.yields[0].Body, want)
+	if wire.AckBroker == "" {
+		t.Error("an acknowledged beat must name someone")
 	}
 }
 
-// beatWatcher gates on the fast beat twice and speaks what it saw.
+// beatWatcher gates on the fast beat and speaks who it names.
 type beatWatcher struct{ koine.ObserverBase }
 
 func (beatWatcher) Identity() koine.Identity {
@@ -276,66 +338,23 @@ func (beatWatcher) Complete() koine.Contract    { return koine.DefaultAllAwaited
 func (beatWatcher) Resolve(d koine.Delivery, yield koine.Yield) {
 	dep := d.(deployment.ResolvedDelivery)
 	h := dep.History().Last(koine.Success)
-	first := h.Received().By
-	if first == "" {
-		first = "pending"
-	}
-	yield(deployment.DeploymentRecorded{Artifact: deployment.ArtifactRef(string(first) + "-then-" + string(h.Received().By))})
-}
-
-// TestWire_ARefusedYieldCancelsResolution pins the Yield contract across the
-// boundary: false is the host cancelling, and nothing after the refusal is
-// spoken.
-func TestWire_ARefusedYieldCancelsResolution(t *testing.T) {
-	host := &scriptHost{cancelAt: 1}
-	guest := wire.New(stewardStation(&twoSpeaker{}), host)
-	if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Cancelled {
-		t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
-	}
-	if len(host.yields) != 1 {
-		t.Fatalf("the host refused the first yield and still heard %d: %#v", len(host.yields), host.yields)
-	}
-
-	// With nothing refused, the same body speaks twice — without the
-	// control, the count above would prove nothing.
-	open := &scriptHost{}
-	if got := wire.New(stewardStation(&twoSpeaker{}), open).Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
-		t.Fatalf("the control ended %s", got)
-	}
-	if len(open.yields) != 2 {
-		t.Fatalf("the control spoke %d times, want 2", len(open.yields))
-	}
-}
-
-// twoSpeaker speaks twice, so a refusal has something after it to suppress.
-type twoSpeaker struct{ koine.ObserverBase }
-
-func (twoSpeaker) Identity() koine.Identity {
-	return koine.Identity{Group: "payment-engineering", Author: "mchen", Name: "deployment-steward"}
-}
-func (twoSpeaker) Awaits() []selector.Selector { return selector.List(deployment.Resolved()) }
-func (twoSpeaker) Complete() koine.Contract    { return koine.DefaultAllAwaited }
-func (twoSpeaker) Resolve(d koine.Delivery, yield koine.Yield) {
-	dep := d.(deployment.ResolvedDelivery)
-	yield(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
-	yield(deployment.Deploy{Artifact: dep.ArtifactID, Target: dep.Environment})
+	yield(deployment.DeploymentRecorded{Artifact: deployment.ArtifactRef(h.Received().By)})
 }
 
 // TestWire_ConstructionIsDelivery pins §4's sentence as a fact: the chain a
 // station stands in and the actor whose authority it carries are minted
-// below the line and handed up, once, before Resolve. A station observes
-// them; it never invents one, and there is no constructor for it to reach.
+// below the line and handed up, once, before Resolve.
 func TestWire_ConstructionIsDelivery(t *testing.T) {
 	steward := &station.DeploymentSteward{}
 	if steward.Chain() != "" || steward.Actor() != "" {
 		t.Fatal("a station standing nowhere already had a chain")
 	}
-	host := &scriptHost{value: wire.ValueFrame{State: wire.StateFilled, Body: []byte(`{}`)}}
+	host := &scriptHost{answer: wire.AnswerFrame{Status: 200, Value: []byte(`{}`)}}
 	guest := wire.New(stewardStation(steward), host)
 	if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
 		t.Fatalf("deliver = %s (%s)", got, guest.Refusal())
 	}
-	if steward.Chain() != "chain/7" {
+	if steward.Chain() != "chain-7" {
 		t.Errorf("Chain() = %q, want the chain the frame carried", steward.Chain())
 	}
 	if steward.Actor() != "sub:mchen;act:conduit" {
@@ -347,8 +366,7 @@ func TestWire_ConstructionIsDelivery(t *testing.T) {
 		t.Errorf("Project() = %#v; the shape is reserved, not invented", steward.Project())
 	}
 
-	// A station that embeds no stratum base is not a station, and the
-	// guest says so instead of resolving it.
+	// A station that embeds no stratum base is not a station.
 	baseless := wire.New(stewardStation(noBase{}), &scriptHost{})
 	if got := baseless.Deliver(stewardDelivery(failedDeployment)); got != wire.Refused {
 		t.Errorf("a baseless station resolved: %s", got)
@@ -375,22 +393,17 @@ func TestWire_NothingIsStoredOnRefusal(t *testing.T) {
 	}{
 		{
 			name:   "a foreign version",
-			frame:  `{"wire":"koine.wire/99","station":"deployment-steward","facts":{}}`,
-			wantIn: "koine.wire/99",
+			frame:  `{"version":99,"event":{},"eventType":"x"}`,
+			wantIn: "99",
 		},
 		{
 			name:   "an unreadable frame",
-			frame:  `{"wire":`,
+			frame:  `{"version":`,
 			wantIn: "koine/codec",
 		},
 		{
-			name:   "a frame addressed to another station",
-			frame:  `{"wire":"koine.wire/1","station":"some-other-station","facts":{}}`,
-			wantIn: "some-other-station",
-		},
-		{
 			name:   "facts that do not read into this stratum",
-			frame:  `{"wire":"koine.wire/1","station":"deployment-steward","facts":{"outcome":7}}`,
+			frame:  `{"version":1,"event":{"outcome":7},"eventType":"x"}`,
 			wantIn: "did not read into this station's stratum",
 		},
 	}
@@ -414,39 +427,45 @@ func TestWire_NothingIsStoredOnRefusal(t *testing.T) {
 	}
 }
 
-// TestWire_AHostThatCannotOpenAnExchangeIsLoud pins that a seat which will
-// not open is not a domain outcome to branch on. It is a deployment that
-// registration should already have refused by name (§7.3), and the guest
-// traps rather than handing the body a zero value it would treat as an
-// answer. The host attributes the trap (§8).
-func TestWire_AHostThatCannotOpenAnExchangeIsLoud(t *testing.T) {
-	cases := map[string]*scriptHost{
-		"the seat refused to open":                        {openErr: "nobody-connected: history"},
-		"the host minted no token":                        {noToken: true},
-		"the host spoke a version this build cannot read": {badFrames: true},
+// TestWire_AHostThatCannotAnswerIsLoud pins that a seat which will not open,
+// or an answer that is not an answer, traps rather than handing the body a
+// zero value it would treat as truth. The host attributes the trap.
+func TestWire_AHostThatCannotAnswerIsLoud(t *testing.T) {
+	cases := map[string]struct {
+		host   *scriptHost
+		wantIn string
+	}{
+		"the host would not open the exchange": {
+			host: &scriptHost{noHandle: true}, wantIn: "would not open",
+		},
+		"the host answered with nothing": {
+			host: &scriptHost{emptyValue: true}, wantIn: "neither filled nor breached",
+		},
+		"the host answered with bytes this build cannot read": {
+			host: &scriptHost{badValue: true}, wantIn: "cannot read",
+		},
 	}
-	for name, host := range cases {
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
 				r := recover()
 				if r == nil {
-					t.Fatal("the guest carried on without an exchange to gate on")
+					t.Fatal("the guest carried on without an answer")
 				}
 				msg, ok := r.(string)
-				if !ok || !strings.Contains(msg, "koine/wire") || !strings.Contains(msg, "history.last") {
+				if !ok || !strings.Contains(msg, "koine/wire") || !strings.Contains(msg, c.wantIn) {
 					t.Fatalf("the trap said %v", r)
 				}
 			}()
-			guest := wire.New(stewardStation(&station.DeploymentSteward{}), host)
-			guest.Deliver(stewardDelivery(failedDeployment))
+			wire.New(stewardStation(&station.DeploymentSteward{}), c.host).
+				Deliver(stewardDelivery(failedDeployment))
 		})
 	}
 }
 
-// TestWire_TheOnlyEmitPathIsYield pins the claim §8 makes, at the only place
+// TestWire_TheOnlyEmitPathIsYield pins the claim §8 makes at the only place
 // this side of the boundary can pin it: a station that speaks something no
-// stratum generated does not get a second channel to speak it through — it
-// traps, and the host attributes the trap.
+// stratum generated does not get a second channel to speak it through.
 func TestWire_TheOnlyEmitPathIsYield(t *testing.T) {
 	defer func() {
 		r := recover()
@@ -458,8 +477,8 @@ func TestWire_TheOnlyEmitPathIsYield(t *testing.T) {
 			t.Fatalf("the trap said %v", r)
 		}
 	}()
-	guest := wire.New(stewardStation(&homemadeSpeaker{}), &scriptHost{})
-	guest.Deliver(stewardDelivery(failedDeployment))
+	wire.New(stewardStation(&homemadeSpeaker{}), &scriptHost{}).
+		Deliver(stewardDelivery(failedDeployment))
 }
 
 // homemade is an utterance an author wrote by hand: it satisfies koine's
@@ -484,9 +503,9 @@ func (homemadeSpeaker) Resolve(_ koine.Delivery, yield koine.Yield) {
 func TestWire_OffTargetThereIsNoHost(t *testing.T) {
 	guest := wire.Serve(stewardStation(&station.DeploymentSteward{}))
 	for name, call := range map[string]func(){
+		"alloc":    func() { guest.AllocExport(16) },
 		"manifest": func() { guest.ManifestExport() },
-		"inbox":    func() { guest.InboxExport() },
-		"deliver":  func() { guest.DeliverExport(0) },
+		"resolve":  func() { guest.ResolveExport(0, 0) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			defer func() {
@@ -503,17 +522,5 @@ func TestWire_OffTargetThereIsNoHost(t *testing.T) {
 	}
 	if !strings.Contains(wire.ErrNoHost.Error(), "sandbox") {
 		t.Errorf("ErrNoHost = %v", wire.ErrNoHost)
-	}
-}
-
-// TestWire_InboxCapacityIsAnAnswerNotAnAssumption pins that the size is the
-// export's to state. A guest built against a later SDK may carry a different
-// one, and the host reads it rather than trusting a constant.
-func TestWire_InboxCapacityIsAnAnswerNotAnAssumption(t *testing.T) {
-	if wire.InboxCapacity < 4096 {
-		t.Errorf("the inbox is %d bytes, which will not hold a manifest", wire.InboxCapacity)
-	}
-	if strconv.FormatUint(uint64(wire.InboxCapacity), 10) == "" {
-		t.Fatal("unreachable")
 	}
 }

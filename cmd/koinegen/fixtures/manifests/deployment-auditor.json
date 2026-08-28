@@ -1,26 +1,36 @@
 {
   "schemaVersion": "koine.manifest/1",
   "kind": "station",
-  "claim": {
+  "identity": {
     "group": "payment-engineering",
     "author": "mchen",
     "name": "deployment-auditor"
   },
-  "events": [
-    {
-      "type": "dev.cdevents.deployment.recorded",
-      "direction": "emit",
-      "reconciliation": {
-        "declared": false
-      }
-    }
+  "claim": "dev.cdevents.deployment",
+  "awaits": [
+    "dev.cdevents.deployment"
+  ],
+  "complete": "all-awaited",
+  "emits": [
+    "dev.cdevents.deployment.recorded"
+  ],
+  "exchanges": [
+    "history.last"
   ],
   "koine": {
     "stratum": "execution",
     "lineage": [
       "dev.cdevents.deployment"
     ],
-    "complete": "all-awaited",
+    "events": [
+      {
+        "type": "dev.cdevents.deployment.recorded",
+        "direction": "emit",
+        "reconciliation": {
+          "declared": false
+        }
+      }
+    ],
     "awaits": [
       {
         "type": "dev.cdevents.deployment",

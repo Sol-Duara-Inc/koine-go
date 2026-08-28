@@ -50,7 +50,7 @@ var guest = wire.Serve(wire.Station{
 // there is nothing here to filter — two walls, one semantic.
 func decode(f wire.DeliveryFrame) (koine.Delivery, error) {
 	var d deployment.ResolvedDelivery
-	if err := d.UnmarshalJSON(f.Facts); err != nil {
+	if err := d.UnmarshalJSON(f.Event); err != nil {
 		return nil, err
 	}
 	return d, nil

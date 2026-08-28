@@ -9,17 +9,20 @@
 package main
 
 // The guest's whole declared surface: three exports, and this file is all of
-// them. A reader can count them, and so can the engine's loader — the names
-// are koine/wire's GuestExports, and neither side keeps its own copy.
+// them. The names and signatures are the HOST'S — koinehost.Host.Load
+// requires alloc((i32)->i32) and resolve((i32,i32)->i32), and reads the
+// manifest from manifest(()->i64). A reader can count them, and so can the
+// loader: the names are koine/wire's GuestExports, and neither side keeps
+// its own copy.
+
+//go:wasmexport alloc
+func allocExport(size uint32) uint32 { return guest.AllocExport(size) }
 
 //go:wasmexport manifest
 func manifestExport() uint64 { return guest.ManifestExport() }
 
-//go:wasmexport inbox
-func inboxExport() uint64 { return guest.InboxExport() }
-
-//go:wasmexport deliver
-func deliverExport(length uint32) uint32 { return guest.DeliverExport(length) }
+//go:wasmexport resolve
+func resolveExport(addr, length uint32) uint32 { return guest.ResolveExport(addr, length) }
 
 // main is required and does nothing. A station is not a program: it stands
 // still and speaks when it is delivered to.

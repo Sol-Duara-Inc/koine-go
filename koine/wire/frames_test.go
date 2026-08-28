@@ -1,7 +1,11 @@
 // These tests live in wire_test — a FOREIGN package, the way the engine
-// sees this contract. Everything asserted here is asserted from outside the
-// wall, because outside the wall is where the other half of the treaty
-// stands.
+// sees this contract.
+//
+// They pin the shapes this SDK writes. They do NOT pin that those shapes are
+// the host's — nothing inside one repository can pin that, which is the
+// whole lesson of this contract's first attempt. The conformance module
+// compares these bytes against the host's own marshaller; what follows is
+// the fast inner loop, not the gate.
 package wire_test
 
 import (
@@ -9,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sol-duara-inc/koine-go/cmd/koinegen/fixtures/strata/deployment"
 	"github.com/sol-duara-inc/koine-go/koine"
 	"github.com/sol-duara-inc/koine-go/koine/wire"
 )
@@ -18,85 +23,66 @@ import (
 // that names another one is refused by name, and the refusal quotes both
 // sides so the person reading it at load time knows which build to move.
 func TestWire_VersionIsAConstantBothSidesGateOn(t *testing.T) {
-	if wire.Version == "" {
-		t.Fatal("the contract has no version")
+	if wire.Version != 1 {
+		t.Fatalf("this build speaks wire %d; koinehost.WireVersion is 1", wire.Version)
 	}
 	if err := wire.Accepts(wire.Version); err != nil {
 		t.Fatalf("this build refuses its own version: %v", err)
 	}
 
-	err := wire.Accepts("koine.wire/99")
+	err := wire.Accepts(99)
 	if err == nil {
 		t.Fatal("a foreign version was accepted")
 	}
 	if !errors.Is(err, wire.ErrVersion) {
 		t.Errorf("a version refusal must be reachable through ErrVersion: %v", err)
 	}
-	if !strings.Contains(err.Error(), "koine.wire/99") || !strings.Contains(err.Error(), wire.Version) {
+	if !strings.Contains(err.Error(), "99") || !strings.Contains(err.Error(), "1") {
 		t.Errorf("the refusal must quote both sides: %v", err)
 	}
 
 	// An unversioned frame is refused too, and says so in words rather
-	// than by quoting an empty string at a person.
-	unversioned := wire.Accepts("")
+	// than by quoting a zero at a person.
+	unversioned := wire.Accepts(0)
 	if unversioned == nil {
 		t.Fatal("an unversioned frame was accepted")
 	}
-	if !strings.Contains(unversioned.Error(), "nothing") {
+	if !strings.Contains(unversioned.Error(), "no version at all") {
 		t.Errorf("an unversioned frame should say so: %v", unversioned)
 	}
-}
 
-// TestWire_EveryFrameGatesItsOwnVersion pins that the gate is not one place
-// a reader might forget to call: every frame in the contract checks itself.
-func TestWire_EveryFrameGatesItsOwnVersion(t *testing.T) {
-	foreign := map[string]func() ([]byte, error){
-		"delivery": func() ([]byte, error) { return wire.DeliveryFrame{Wire: "koine.wire/99"}.MarshalJSON() },
-		"yield":    func() ([]byte, error) { return wire.YieldFrame{Wire: "koine.wire/99"}.MarshalJSON() },
-		"exchange": func() ([]byte, error) { return wire.ExchangeFrame{Wire: "koine.wire/99"}.MarshalJSON() },
-		"opened":   func() ([]byte, error) { return wire.OpenedFrame{Wire: "koine.wire/99"}.MarshalJSON() },
-		"ack":      func() ([]byte, error) { return wire.AckFrame{Wire: "koine.wire/99"}.MarshalJSON() },
-		"value":    func() ([]byte, error) { return wire.ValueFrame{Wire: "koine.wire/99"}.MarshalJSON() },
+	// The delivery frame gates itself: the gate is not one place a reader
+	// might forget to call.
+	foreign, err := wire.DeliveryFrame{Version: 99}.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
 	}
-	decoders := map[string]func([]byte) error{
-		"delivery": func(b []byte) error { _, err := wire.DecodeDelivery(b); return err },
-		"yield":    func(b []byte) error { _, err := wire.DecodeYield(b); return err },
-		"exchange": func(b []byte) error { _, err := wire.DecodeExchange(b); return err },
-		"opened":   func(b []byte) error { _, err := wire.DecodeOpened(b); return err },
-		"ack":      func(b []byte) error { _, err := wire.DecodeAck(b); return err },
-		"value":    func(b []byte) error { _, err := wire.DecodeValue(b); return err },
+	if _, err := wire.DecodeDelivery(foreign); !errors.Is(err, wire.ErrVersion) {
+		t.Fatalf("a foreign delivery frame was read: %v", err)
 	}
-	for name, render := range foreign {
-		t.Run(name, func(t *testing.T) {
-			data, err := render()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := decoders[name](data); !errors.Is(err, wire.ErrVersion) {
-				t.Fatalf("a foreign %s frame was read: %v", name, err)
-			}
-			if err := decoders[name]([]byte(`{}`)); !errors.Is(err, wire.ErrVersion) {
-				t.Fatalf("an unversioned %s frame was read: %v", name, err)
-			}
-		})
+	if _, err := wire.DecodeDelivery([]byte(`{}`)); !errors.Is(err, wire.ErrVersion) {
+		t.Fatalf("an unversioned delivery frame was read: %v", err)
 	}
 }
 
 // TestWire_FramesRoundTripWithoutReflection pins the shape of every frame
-// byte for byte. The literals below are the contract as the engine will read
-// it, and a change to one of them is a change two trackers gate on — which
-// is exactly why they are written out here rather than compared to
-// themselves.
+// byte for byte, in the host's key order and with the host's omitempty
+// rules. The literals below are the contract as the engine reads it.
 func TestWire_FramesRoundTripWithoutReflection(t *testing.T) {
 	t.Run("delivery", func(t *testing.T) {
-		want := `{"wire":"koine.wire/1","station":"deployment-steward","chain":"chain/7",` +
-			`"actor":"sub:mchen;act:conduit","anchor":"deploy","type":"dev.cdevents.deployment.finished",` +
-			`"facts":{"subject":"payments-api","outcome":"failure"}}`
+		want := `{"version":1,"event":{"subject":"payments-api","outcome":"failure"},` +
+			`"eventType":"dev.cdevents.deployment.finished","subject":"payments-api",` +
+			`"runId":"run-1","chainId":"chain-7","actor":"sub:mchen;act:conduit",` +
+			`"context":{"anchor":"deploy","attempt":"2"}}`
 		f := wire.DeliveryFrame{
-			Wire: wire.Version, Station: "deployment-steward", Chain: "chain/7",
-			Actor: "sub:mchen;act:conduit", Anchor: "deploy",
-			Type:  "dev.cdevents.deployment.finished",
-			Facts: []byte(`{"subject":"payments-api","outcome":"failure"}`),
+			Version:   wire.Version,
+			Event:     []byte(`{"subject":"payments-api","outcome":"failure"}`),
+			EventType: "dev.cdevents.deployment.finished",
+			Subject:   "payments-api",
+			RunID:     "run-1",
+			ChainID:   "chain-7",
+			Actor:     "sub:mchen;act:conduit",
+			Context:   map[string]string{"attempt": "2", "anchor": "deploy"},
 		}
 		data := render(t, f)
 		if data != want {
@@ -106,139 +92,128 @@ func TestWire_FramesRoundTripWithoutReflection(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if back.Station != f.Station || back.Chain != f.Chain || back.Actor != f.Actor ||
-			back.Anchor != f.Anchor || back.Type != f.Type || string(back.Facts) != string(f.Facts) {
+		if back.EventType != f.EventType || back.RunID != f.RunID || back.ChainID != f.ChainID ||
+			back.Actor != f.Actor || back.Subject != f.Subject || string(back.Event) != string(f.Event) {
 			t.Fatalf("round trip lost keys: %#v", back)
+		}
+		if back.Anchor() != "deploy" {
+			t.Errorf("the anchor did not survive: %q", back.Anchor())
 		}
 	})
 
-	t.Run("yield", func(t *testing.T) {
-		want := `{"wire":"koine.wire/1","type":"dev.cdevents.deployment.requested","body":{"artifact":"sha256:good","target":"prod"}}`
-		f := wire.YieldFrame{
-			Wire: wire.Version, Type: "dev.cdevents.deployment.requested",
-			Body: []byte(`{"artifact":"sha256:good","target":"prod"}`),
-		}
-		if data := render(t, f); data != want {
+	t.Run("delivery omits what the host omits", func(t *testing.T) {
+		const want = `{"version":1,"event":null,"eventType":"","runId":"","chainId":""}`
+		if data := render(t, wire.DeliveryFrame{Version: wire.Version}); data != want {
 			t.Fatalf("wrote\n  %s\nwant\n  %s", data, want)
 		}
-		back, err := wire.DecodeYield([]byte(want))
-		if err != nil {
-			t.Fatal(err)
+		// A context map that exists but is empty is still omitted, the
+		// way encoding/json omits it.
+		empty := wire.DeliveryFrame{Version: wire.Version, Context: map[string]string{}}
+		if data := render(t, empty); strings.Contains(data, "context") {
+			t.Errorf("an empty context was written: %s", data)
 		}
-		if back.Type != f.Type || string(back.Body) != string(f.Body) {
-			t.Fatalf("round trip lost keys: %#v", back)
+	})
+
+	t.Run("yield is the domain object, not a wrapper", func(t *testing.T) {
+		spoken := deployment.SeedDeploy("sha256:good", "prod")
+		want := `{"type":"dev.cdevents.deployment.requested","artifact":"sha256:good","target":"prod"}`
+		got := render(t, wire.YieldFrame{Type: spoken.EventType(), Body: spoken})
+		if got != want {
+			t.Fatalf("wrote\n  %s\nwant\n  %s", got, want)
+		}
+		// The host stores these very bytes as the payload and reads the
+		// type out of them, so a nested "payload" or "body" key would
+		// mean the record holds the wire's paperwork instead of the
+		// station's speech.
+		for _, wrapper := range []string{`"payload"`, `"body"`, `"wire"`} {
+			if strings.Contains(got, wrapper) {
+				t.Errorf("the yield frame wraps the object: %s", got)
+			}
 		}
 	})
 
 	t.Run("exchange", func(t *testing.T) {
-		want := `{"wire":"koine.wire/1","seat":"history","name":"history.last",` +
-			`"args":[{"name":"outcome","value":"success"}]}`
-		f := wire.ExchangeFrame{
-			Wire: wire.Version, Seat: "history", Name: "history.last",
-			Args: []koine.Arg{{Name: "outcome", Value: "success"}},
-		}
+		want := `{"type":"history.last","filter":{"environment":"prod"},"outcome":"success"}`
+		f := wire.NewExchangeFrame(koine.Exchange{
+			Seat: "history",
+			Name: "history.last",
+			Args: []koine.Arg{
+				{Name: "outcome", Value: "success"},
+				{Name: "environment", Value: "prod"},
+			},
+		})
 		if data := render(t, f); data != want {
 			t.Fatalf("wrote\n  %s\nwant\n  %s", data, want)
+		}
+		// An argument named outcome rides the host's own Outcome field
+		// and nowhere else — one fact, one place.
+		if f.Filter["outcome"] != "" {
+			t.Errorf("the outcome argument was written twice: %#v", f)
+		}
+		if f.Outcome != "success" {
+			t.Errorf("the outcome argument did not reach its field: %#v", f)
 		}
 		back, err := wire.DecodeExchange([]byte(want))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if back.Seat != f.Seat || back.Name != f.Name || len(back.Args) != 1 ||
-			back.Args[0] != f.Args[0] {
+		if back.Type != "history.last" || back.Outcome != "success" || back.Filter["environment"] != "prod" {
 			t.Fatalf("round trip lost keys: %#v", back)
 		}
 
-		// An intent with no arguments still writes the key, so the shape
-		// of a frame never depends on what happened to be in it.
-		empty := wire.ExchangeFrame{Wire: wire.Version, Seat: "ledger", Name: "ledger.note"}
-		if data := render(t, empty); !strings.Contains(data, `"args":[]`) {
-			t.Errorf("an argument-less intent wrote %s", data)
+		// An intent with no arguments writes neither key.
+		bare := render(t, wire.NewExchangeFrame(koine.Exchange{Seat: "ledger", Name: "ledger.note"}))
+		if bare != `{"type":"ledger.note"}` {
+			t.Errorf("an argument-less intent wrote %s", bare)
 		}
 	})
 
-	t.Run("opened", func(t *testing.T) {
-		want := `{"wire":"koine.wire/1","token":18446744073709551615,"err":""}`
-		f := wire.OpenedFrame{Wire: wire.Version, Token: 1<<64 - 1}
-		if data := render(t, f); data != want {
-			t.Fatalf("wrote\n  %s\nwant\n  %s", data, want)
+	t.Run("answer", func(t *testing.T) {
+		filled := `{"status":200,"value":{"artifactId":"sha256:good"}}`
+		if data := render(t, wire.AnswerFrame{Status: 200, Value: []byte(`{"artifactId":"sha256:good"}`)}); data != filled {
+			t.Fatalf("wrote\n  %s\nwant\n  %s", data, filled)
 		}
-		back, err := wire.DecodeOpened([]byte(want))
+		breached := `{"status":404,"error":"nothing good","breached":true}`
+		if data := render(t, wire.AnswerFrame{Status: 404, Error: "nothing good", Breached: true}); data != breached {
+			t.Fatalf("wrote\n  %s\nwant\n  %s", data, breached)
+		}
+		back, err := wire.DecodeAnswer([]byte(breached))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if back.Token != f.Token {
-			t.Fatalf("a token must survive its whole range: %d", back.Token)
-		}
-	})
-
-	t.Run("ack", func(t *testing.T) {
-		want := `{"wire":"koine.wire/1","state":"received","by":"sub:history-fulfiller"}`
-		f := wire.AckFrame{Wire: wire.Version, State: wire.StateReceived, By: "sub:history-fulfiller"}
-		if data := render(t, f); data != want {
-			t.Fatalf("wrote\n  %s\nwant\n  %s", data, want)
-		}
-		back, err := wire.DecodeAck([]byte(want))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if back.State != f.State || back.By != f.By {
+		if !back.Breach() || back.Error != "nothing good" || back.Status != 404 {
 			t.Fatalf("round trip lost keys: %#v", back)
 		}
-	})
-
-	t.Run("value", func(t *testing.T) {
-		want := `{"wire":"koine.wire/1","state":"filled","by":"sub:history-fulfiller",` +
-			`"body":{"artifactId":"sha256:good"},"err":""}`
-		f := wire.ValueFrame{
-			Wire: wire.Version, State: wire.StateFilled, By: "sub:history-fulfiller",
-			Body: []byte(`{"artifactId":"sha256:good"}`),
+		// A named error without the flag is the same fact said once.
+		if !(wire.AnswerFrame{Error: "gone"}).Breach() {
+			t.Error("an answer that named an error is not filled")
 		}
-		if data := render(t, f); data != want {
-			t.Fatalf("wrote\n  %s\nwant\n  %s", data, want)
-		}
-		back, err := wire.DecodeValue([]byte(want))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if back.State != f.State || string(back.Body) != string(f.Body) {
-			t.Fatalf("round trip lost keys: %#v", back)
-		}
-
-		// A frame with no payload writes null and reads back as nothing,
-		// which is what an absent projection means.
-		breached := wire.ValueFrame{Wire: wire.Version, State: wire.StateBreached, Err: "no-such-deployment"}
-		data := render(t, breached)
-		if !strings.Contains(data, `"body":null`) {
-			t.Errorf("an empty payload wrote %s", data)
-		}
-		back, err = wire.DecodeValue([]byte(data))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if back.Body != nil {
-			t.Errorf("null read back as %q", back.Body)
-		}
-		if back.Err != "no-such-deployment" {
-			t.Errorf("the outcome variant did not survive: %q", back.Err)
+		if (wire.AnswerFrame{Status: 200}).Breach() {
+			t.Error("a plain answer is not a breach")
 		}
 	})
 }
 
 // TestWire_FramesCarryPayloadsWithoutParsingThem pins the division of
 // labour: a stratum's shape belongs to the stratum, and the wire moves it
-// whole. This is also why a delivery may grow keys while K2 is in flight
-// without moving Version — the wire carries whatever it is handed.
+// whole. This is also why a delivery may grow keys (conduit-go#184's run
+// register) without moving Version.
 func TestWire_FramesCarryPayloadsWithoutParsingThem(t *testing.T) {
 	odd := `{"a":[1,{"b":"}"},null],"deep":{"deeper":{"deepest":[]}},"n":-1.5e3}`
-	f := wire.DeliveryFrame{Wire: wire.Version, Type: "x", Facts: []byte(odd)}
-	data := render(t, f)
-	back, err := wire.DecodeDelivery([]byte(data))
+	f := wire.DeliveryFrame{Version: wire.Version, Event: []byte(odd)}
+	back, err := wire.DecodeDelivery([]byte(render(t, f)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(back.Facts) != odd {
-		t.Fatalf("the payload came back as\n  %s\nwant\n  %s", back.Facts, odd)
+	if string(back.Event) != odd {
+		t.Fatalf("the payload came back as\n  %s\nwant\n  %s", back.Event, odd)
+	}
+	// A delivery carrying keys this build has never heard of is still a
+	// delivery: unknown keys are skipped, not refused.
+	grown := `{"version":1,"event":{},"eventType":"x","runId":"r","chainId":"c",` +
+		`"runRegister":{"slots":[{"k":"v"}]},"somethingNewer":7}`
+	if _, err := wire.DecodeDelivery([]byte(grown)); err != nil {
+		t.Fatalf("a delivery that grew keys was refused: %v", err)
 	}
 }
 
@@ -248,50 +223,65 @@ func TestWire_UnreadableFramesAreRefusedByName(t *testing.T) {
 	for _, bad := range []string{
 		``,
 		`{`,
-		`{"wire":}`,
-		`{"wire":"koine.wire/1"} trailing`,
+		`{"version":}`,
+		`{"version":1} trailing`,
 		`[1,2]`,
-		`{"wire":"koine.wire/1","facts":}`,
+		`{"version":1,"event":}`,
+		`{"version":"one"}`,
 	} {
 		if _, err := wire.DecodeDelivery([]byte(bad)); err == nil {
 			t.Errorf("%q was read", bad)
 		}
 	}
-	if _, err := wire.DecodeOpened([]byte(`{"wire":"koine.wire/1","token":"seven"}`)); err == nil {
-		t.Error("a token that is not a number was read")
+	if _, err := wire.DecodeAnswer([]byte(`{"status":"ok"}`)); err == nil {
+		t.Error("a status that is not a number was read")
 	}
-	if _, err := wire.DecodeExchange([]byte(`{"wire":"koine.wire/1","args":{"name":"x"}}`)); err == nil {
-		t.Error("arguments that are not an array were read")
+	if _, err := wire.DecodeExchange([]byte(`{"filter":["a"]}`)); err == nil {
+		t.Error("a filter that is not an object was read")
 	}
 }
 
 // TestWire_ABIIsOneListBothSidesRead pins that the names on the boundary are
-// DATA. The engine's loader gates on this package's lists; if either side
-// kept its own copy they would drift, and the drift would surface as a load
-// failure nobody could explain.
+// DATA. The engine's loader gates on these; if either side kept its own copy
+// they would drift, and the drift would surface as a load failure nobody
+// could explain.
 func TestWire_ABIIsOneListBothSidesRead(t *testing.T) {
-	if wire.Module != "koine" {
-		t.Errorf("the import module is %q", wire.Module)
+	if wire.Module != "koine" || wire.Alias != "conduit" {
+		t.Errorf("the import modules are %q and %q", wire.Module, wire.Alias)
 	}
-	wantImports := []string{"ack_poll", "exchange", "value_poll", "yield"}
-	if strings.Join(wire.GuestImports, ",") != strings.Join(wantImports, ",") {
+	wantImports := "ack_poll,deliver,exchange,host_log,value_poll,yield"
+	if strings.Join(wire.GuestImports, ",") != wantImports {
 		t.Errorf("guest imports = %v, want %v", wire.GuestImports, wantImports)
 	}
-	wantExports := []string{"deliver", "inbox", "manifest"}
-	if strings.Join(wire.GuestExports, ",") != strings.Join(wantExports, ",") {
+	wantExports := "alloc,manifest,resolve"
+	if strings.Join(wire.GuestExports, ",") != wantExports {
 		t.Errorf("guest exports = %v, want %v", wire.GuestExports, wantExports)
 	}
-	if len(wire.GuestImports) != 4 {
-		t.Errorf("DESIGN §8 names five host functions, four of them guest→host; this build imports %d", len(wire.GuestImports))
+	wantForbidden := "emit,emit_result,host_egress"
+	if strings.Join(wire.ForbiddenExports, ",") != wantForbidden {
+		t.Errorf("forbidden exports = %v, want %v", wire.ForbiddenExports, wantForbidden)
 	}
 
 	// The lists are sorted, because a set that is compared by joining is
 	// a set that has to have an order.
-	for _, list := range [][]string{wire.GuestImports, wire.GuestExports, wire.ToolchainExports} {
+	for _, list := range [][]string{
+		wire.GuestImports, wire.GuestExports, wire.ToolchainExports,
+		wire.ForbiddenExports, wire.ForbiddenImports,
+	} {
 		for i := 1; i < len(list); i++ {
 			if list[i-1] >= list[i] {
 				t.Errorf("%v is not sorted", list)
 				break
+			}
+		}
+	}
+
+	// No name is both required and forbidden — a contradiction no guest
+	// could satisfy.
+	for _, e := range wire.GuestExports {
+		for _, f := range wire.ForbiddenExports {
+			if e == f {
+				t.Errorf("%q is both required and forbidden", e)
 			}
 		}
 	}
@@ -306,7 +296,7 @@ func TestWire_ABIIsOneListBothSidesRead(t *testing.T) {
 }
 
 // TestWire_OutcomesAreNamed pins the small vocabulary a host reads off the
-// deliver export, including the one that is deliberately absent.
+// resolve export, including the one that is deliberately absent.
 func TestWire_OutcomesAreNamed(t *testing.T) {
 	cases := map[wire.Outcome]string{
 		wire.Resolved:   "resolved",
@@ -319,8 +309,13 @@ func TestWire_OutcomesAreNamed(t *testing.T) {
 			t.Errorf("Outcome(%d) = %q, want %q", uint32(o), o.String(), want)
 		}
 	}
+	// Zero is success on both sides of the boundary: the host reads
+	// anything else as work.finished{outcome: failure}.
 	if wire.Resolved != 0 {
-		t.Error("resolved must be zero: a guest that returns nothing returned normally")
+		t.Error("resolved must be zero — the host reads non-zero as failure")
+	}
+	if wire.Cancelled == 0 || wire.Refused == 0 {
+		t.Error("cancelled and refused must not read as success")
 	}
 }
 

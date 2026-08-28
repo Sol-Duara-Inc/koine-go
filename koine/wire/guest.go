@@ -5,41 +5,52 @@ import (
 	"strconv"
 
 	"github.com/sol-duara-inc/koine-go/koine"
+	"github.com/sol-duara-inc/koine-go/koine/codec"
 )
 
-// The guest side of the contract, written so that everything except the four
-// import stubs is ordinary Go that runs and is tested off-target. A wasm
-// module is a hard place to debug; almost none of what follows needs to be
-// debugged there.
+// The guest side of the contract, written so that everything except the six
+// import stubs and the three export bodies is ordinary Go that runs and is
+// tested off-target. A wasm module is a hard place to debug; almost none of
+// what follows needs to be debugged there — and the conformance module runs
+// the rest of it inside the real sandbox, against the real loader.
 
-// Host is the four guest→host calls of §8, behind an interface so the guest
+// Host is the guest→host surface of §8, behind an interface so the guest
 // runtime is testable without a sandbox. The wasm build wires it to the
 // //go:wasmimport stubs; a test wires it to a scripted host. There is no
 // third implementation and no room for one — the interface is the entire
 // surface a guest can reach.
 type Host interface {
-	// Yield hands one utterance frame over. The host forms the envelope,
-	// continues the chain, and stores by emitting. False is the host
-	// cancelling: nothing after the refusal is spoken.
-	Yield(frame []byte) bool
-	// Exchange utters an intent and answers with an opened frame naming
-	// the token, or naming a refusal.
-	Exchange(frame []byte) []byte
-	// AckPoll asks the fast beat.
-	AckPoll(token uint64) []byte
-	// ValuePoll asks whether the exchange is filled, breached, or still
-	// pending.
-	ValuePoll(token uint64) []byte
+	// Yield hands one utterance over. The host forms the envelope,
+	// continues the chain, and stores by emitting. It reports the HOST'S
+	// code: zero is success, and anything else is a host that could not
+	// take it.
+	Yield(frame []byte) uint32
+	// Exchange utters an intent and answers with the handle the broker
+	// minted, or zero for a refusal.
+	Exchange(frame []byte) uint64
+	// AckPoll asks the fast beat. Non-zero means the broker has it.
+	AckPoll(handle uint64) uint32
+	// ValuePoll waits until the exchange is filled or breached and
+	// answers the response bytes.
+	ValuePoll(handle uint64) []byte
+	// Log carries a diagnostic line beside the run. It is not an emit
+	// path: the host records it and never stores it as an event.
+	Log(msg string)
 }
 
 // Speakable is what an utterance must be able to do to cross the boundary:
-// name the event type it carries on the record, and render itself without
-// reflection. Every generated stratum type can; nothing else can, which is
-// the point.
+// name the event type it carries on the record, and write its own keys
+// without reflection. Every generated stratum type can; nothing else can,
+// which is the point.
+//
+// It is EncodeFields rather than MarshalJSON because the bytes the host
+// stores are the domain object itself — the type key is written beside the
+// object's keys, not around them — and splicing a key into finished JSON
+// would mean string surgery on a payload this package does not own.
 type Speakable interface {
 	koine.Utterance
 	EventType() string
-	MarshalJSON() ([]byte, error)
+	EncodeFields(*codec.Writer)
 }
 
 // Station is what one guest serves: one station, its derived manifest, and
@@ -65,11 +76,11 @@ type Station struct {
 }
 
 // Guest is one wasm module's runtime: one station, one host below it, one
-// inbox. A module is a singleton by nature, and so is this.
+// arena. A module is a singleton by nature, and so is this.
 type Guest struct {
 	station Station
 	host    Host
-	inbox   []byte
+	arena   arena
 	// refusal holds why the last delivery was refused, so a host reading
 	// the outcome code can ask for the sentence behind it.
 	refusal string
@@ -79,7 +90,7 @@ type Guest struct {
 // does not, because inside the sandbox there is exactly one host and it is
 // not a choice anybody makes.
 func New(st Station, h Host) *Guest {
-	return &Guest{station: st, host: h, inbox: make([]byte, InboxCapacity)}
+	return &Guest{station: st, host: h}
 }
 
 // Serve builds the guest runtime over the sandbox below it. This is what a
@@ -95,17 +106,13 @@ func Serve(st Station) *Guest {
 func (g *Guest) Refusal() string { return g.refusal }
 
 // Deliver resolves one delivery and reports how it ended. It is the portable
-// core of the deliver export, and it is where nothing is stored on refusal
+// core of the resolve export, and it is where nothing is stored on refusal
 // (A9): a frame that cannot be read runs no body at all.
 func (g *Guest) Deliver(frame []byte) Outcome {
 	g.refusal = ""
 	f, err := DecodeDelivery(frame)
 	if err != nil {
 		return g.refuse(err.Error())
-	}
-	claim := g.station.Koine.Identity()
-	if f.Station != "" && f.Station != claim.Name {
-		return g.refuse("frame addresses station " + strconv.Quote(f.Station) + "; this guest serves " + strconv.Quote(claim.Name))
 	}
 	if g.station.Decode == nil {
 		return g.refuse("this guest declares no way to read its own stratum")
@@ -122,7 +129,7 @@ func (g *Guest) Deliver(frame []byte) Outcome {
 	// the line and handed up; a station observes them and never invents
 	// one. ProjectContext stays nil: its content is deliberately unruled
 	// (§4), and this package surfaces that rather than inventing a shape.
-	if !koine.Construct(g.station.Koine, koine.ChainRef(f.Chain), koine.ActorRef(f.Actor), nil) {
+	if !koine.Construct(g.station.Koine, koine.ChainRef(f.ChainID), koine.ActorRef(f.Actor), nil) {
 		return g.refuse("this guest serves something that embeds no stratum base, which is not a station")
 	}
 
@@ -135,7 +142,11 @@ func (g *Guest) Deliver(frame []byte) Outcome {
 		if cancelled {
 			return false
 		}
-		if !g.host.Yield(g.yieldFrame(u)) {
+		// The host answers ZERO for success. Reading that backwards
+		// would turn every stored emission into a cancellation without
+		// ever raising an error, which is why the polarity is written
+		// out here in words and pinned by a test.
+		if g.host.Yield(g.yieldFrame(u)) != 0 {
 			cancelled = true
 			return false
 		}
@@ -155,13 +166,9 @@ func (g *Guest) yieldFrame(u koine.Utterance) []byte {
 	if !ok {
 		panic("koine/wire: a station yielded something no stratum generated — the emit path carries named domain objects, and there is no second channel to carry anything else")
 	}
-	body, err := speakable.MarshalJSON()
+	frame, err := YieldFrame{Type: speakable.EventType(), Body: speakable}.MarshalJSON()
 	if err != nil {
 		panic("koine/wire: an utterance could not render itself: " + err.Error())
-	}
-	frame, err := YieldFrame{Wire: Version, Type: speakable.EventType(), Body: body}.MarshalJSON()
-	if err != nil {
-		panic("koine/wire: a yield frame could not render itself: " + err.Error())
 	}
 	return frame
 }
@@ -175,82 +182,78 @@ func (g *Guest) refuse(why string) Outcome {
 // went the other way. It is never transport — there is no transport in this
 // vocabulary to report — so a station branches on it rather than defending
 // against it.
-type Variant struct{ Name string }
+type Variant struct {
+	Name   string
+	Status int
+}
 
-func (v *Variant) Error() string { return v.Name }
+func (v *Variant) Error() string {
+	if v.Name == "" {
+		return "koine/wire: the exchange breached with status " + strconv.Itoa(v.Status)
+	}
+	return v.Name
+}
 
-// broker turns koine.Broker's three beats into the three host calls. It is
-// the only implementation of Broker the SDK ships for a live host, and a
-// station body can no more reach it than it can reach the host.
+// AckBroker is who the fast beat names.
+//
+// Wire v1 carries no comprehender: the host's ack_poll answers an integer
+// and nothing else, so the only party this guest can honestly name is the
+// one that did acknowledge — the deployment's broker. Naming the FULFILLER
+// there is a v2 field, and both sides move together when it lands (see the
+// PR that ruled the host normative). Until then this is the true answer to
+// a smaller question, rather than a plausible answer to the right one.
+const AckBroker = koine.ActorRef("conduit:broker")
+
+// broker turns koine.Broker's three beats into three host calls. It is the
+// only implementation of Broker the SDK ships for a live host, and a station
+// body can no more reach it than it can reach the host.
 type broker struct{ host Host }
-
-// pollLimit is a guard against a host that answers "pending" forever, not a
-// budget. Budgets are the engine's, minted from the manifest's topology; a
-// guest that spins a million times is not over budget, it is talking to
-// something broken, and it says so instead of hanging the sandbox. A host
-// that suspends the guest across the boundary never reaches one iteration.
-// It is a var and not a const for exactly one reason: this package's own
-// test lowers it to prove the guard fires. Nothing exported reaches it, and
-// a guest cannot change it.
-var pollLimit = 1 << 20
 
 // Speak utters the intent and waits on nothing.
 func (b broker) Speak(ex koine.Exchange) koine.Token {
-	frame, err := ExchangeFrame{Wire: Version, Seat: ex.Seat, Name: ex.Name, Args: ex.Args}.MarshalJSON()
+	frame, err := NewExchangeFrame(ex).MarshalJSON()
 	if err != nil {
 		panic("koine/wire: an exchange frame could not render itself: " + err.Error())
 	}
-	opened, err := DecodeOpened(b.host.Exchange(frame))
-	if err != nil {
-		panic("koine/wire: the host answered " + strconv.Quote(ex.Name) + " with a frame this build cannot read: " + err.Error())
-	}
-	if opened.Err != "" {
-		// A seat that cannot open is not a domain outcome; it is a
+	handle := b.host.Exchange(frame)
+	if handle == 0 {
+		// A seat that will not open is not a domain outcome; it is a
 		// deployment that registration should already have refused by
-		// name. Trapping is the honest end — the host attributes it.
-		panic("koine/wire: the host refused to open " + strconv.Quote(ex.Name) + " at seat " + strconv.Quote(ex.Seat) + ": " + opened.Err)
+		// name (§7.3). Trapping is the honest end — the host attributes
+		// it as work.finished{outcome: failure}.
+		panic("koine/wire: the host would not open " + strconv.Quote(ex.Name) + " at seat " + strconv.Quote(ex.Seat) + " — an exchange never fails silently")
 	}
-	if opened.Token == 0 {
-		panic("koine/wire: the host opened " + strconv.Quote(ex.Name) + " with no token — there would be nothing to gate on")
-	}
-	return koine.Token(opened.Token)
+	return koine.Token(handle)
 }
 
-// Received is the fast beat. Pending answers a zero Ack: an honest not-yet.
+// Received is the fast beat. A zero Ack is an honest not-yet.
 func (b broker) Received(t koine.Token) koine.Ack {
-	ack, err := DecodeAck(b.host.AckPoll(uint64(t)))
-	if err != nil {
-		panic("koine/wire: the host answered an ack poll with a frame this build cannot read: " + err.Error())
-	}
-	if ack.State != StateReceived {
+	if b.host.AckPoll(uint64(t)) == 0 {
 		return koine.Ack{}
 	}
-	return koine.Ack{By: koine.ActorRef(ack.By)}
+	return koine.Ack{By: AckBroker}
 }
 
 // Await waits until the exchange is filled or breached (E-C, amended
-// 2026-08-27). The loop is deliberately the dumbest possible guest: it lets
-// the HOST choose the mechanism. A host that suspends and resumes the guest
-// across the boundary and a host that simply does not return until there is
-// news are both conforming, and neither is a fact this package pins.
+// 2026-08-27). The wait itself is the HOST's: value_poll does not return
+// until the exchange has gone one way or the other, which is exactly where
+// the ruling left the mechanism. There is no poll loop here and no timeout
+// invented here — a budget is the engine's, minted from the manifest's
+// topology, and a guest that made up its own would be a guest arguing with
+// the calculus.
 func (b broker) Await(t koine.Token) koine.Answer {
-	for polls := 0; polls < pollLimit; polls++ {
-		v, err := DecodeValue(b.host.ValuePoll(uint64(t)))
-		if err != nil {
-			panic("koine/wire: the host answered a value poll with a frame this build cannot read: " + err.Error())
-		}
-		switch v.State {
-		case StateFilled:
-			return koine.Answer{By: koine.ActorRef(v.By), JSON: v.Body}
-		case StateBreached:
-			return koine.Answer{By: koine.ActorRef(v.By), Err: &Variant{Name: v.Err}}
-		case StatePending:
-			continue
-		default:
-			panic("koine/wire: the host answered a value poll with the state " + strconv.Quote(v.State) + ", which is not one this contract admits")
-		}
+	raw := b.host.ValuePoll(uint64(t))
+	if len(raw) == 0 {
+		panic("koine/wire: the host answered a value poll with nothing — a value that is neither filled nor breached is not an answer")
 	}
-	panic("koine/wire: the host answered pending " + strconv.Itoa(pollLimit) + " times — a value that never arrives and never breaches is a host that is not answering")
+	answer, err := DecodeAnswer(raw)
+	if err != nil {
+		panic("koine/wire: the host answered a value poll with a frame this build cannot read: " + err.Error())
+	}
+	if answer.Breach() {
+		return koine.Answer{By: AckBroker, Err: &Variant{Name: answer.Error, Status: answer.Status}}
+	}
+	return koine.Answer{By: AckBroker, JSON: answer.Value}
 }
 
 // ErrNoHost is what an off-target build of the host bindings answers with.

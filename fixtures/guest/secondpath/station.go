@@ -8,12 +8,14 @@
 // guest has no emit path but yield; this fixture is what makes that claim
 // falsifiable, because a claim nothing can violate is not a claim.
 //
-// The engine's loader (Sol-Duara-Inc/conduit-go#185) refuses this module by
-// NAME, before anything in it runs, on the export set alone — the same door,
-// the same reader, and nothing stored on refusal (A9). Nothing on this side
-// stops it: the SDK's job here is to build a module that genuinely declares
-// the extra path, so the refusal is proven against a real violation rather
-// than against a mock of one.
+// The engine's loader refuses this module BY NAME, before anything in it
+// runs, on the export set alone: koinehost.Host.Load rejects the exports
+// "emit", "emit_result" and "host_egress" outright — "only yield is
+// permitted as the emission path". Nothing on this side stops it. The SDK's
+// job here is to build a module that genuinely declares the extra path, so
+// the refusal is proven against a real violation rather than against a mock
+// of one — and the conformance module in this repository proves it against
+// the real loader.
 //
 // Build it the way the engine does:
 //
@@ -47,7 +49,7 @@ var guest = wire.Serve(wire.Station{
 
 func decode(f wire.DeliveryFrame) (koine.Delivery, error) {
 	var d deployment.ResolvedDelivery
-	if err := d.UnmarshalJSON(f.Facts); err != nil {
+	if err := d.UnmarshalJSON(f.Event); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -58,11 +60,7 @@ func decode(f wire.DeliveryFrame) (koine.Delivery, error) {
 // in the export so that the offence is readable in ordinary Go.
 func unbidden() []byte {
 	spoken := deployment.SeedDeploymentRecorded("unbidden")
-	body, err := spoken.MarshalJSON()
-	if err != nil {
-		return nil
-	}
-	frame, err := wire.YieldFrame{Wire: wire.Version, Type: spoken.EventType(), Body: body}.MarshalJSON()
+	frame, err := wire.YieldFrame{Type: spoken.EventType(), Body: spoken}.MarshalJSON()
 	if err != nil {
 		return nil
 	}

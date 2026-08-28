@@ -18,16 +18,21 @@
 
 package wire
 
-import "unsafe"
+import (
+	"strconv"
+	"unsafe"
+)
 
-// The four guest→host imports, and nothing else. This is the entire list;
-// count them. A wasm module can only call what it imports, so the claim that
-// the guest has no emit path but yield is not enforced by a guard — it is
+// itoa keeps the trap message readable without pulling fmt into a guest.
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// The guest→host imports, and nothing else. This is the entire list; count
+// them. A wasm module can only call what it imports, so the claim that the
+// guest has no emit path but yield is not enforced by a guard — it is
 // enforced by the absence of an import to reach for.
 //
-// Every one of them takes a pointer and a length into memory the GUEST owns,
-// and answers with a packed pointer and length into the guest's inbox, which
-// the guest also owns. The host never allocates in guest memory.
+// Every signature below is the host's, read off the functions NewHost
+// registers on its "koine" module.
 
 //go:wasmimport koine yield
 func hostYield(addr, length uint32) uint32
@@ -36,10 +41,13 @@ func hostYield(addr, length uint32) uint32
 func hostExchange(addr, length uint32) uint64
 
 //go:wasmimport koine ack_poll
-func hostAckPoll(token uint64) uint64
+func hostAckPoll(handle uint64) uint32
 
 //go:wasmimport koine value_poll
-func hostValuePoll(token uint64) uint64
+func hostValuePoll(handle uint64) uint64
+
+//go:wasmimport koine host_log
+func hostLog(addr, length uint32)
 
 // sandbox is the Host below a guest actually running in the engine.
 type sandbox struct{ g *Guest }
@@ -49,30 +57,38 @@ type sandbox struct{ g *Guest }
 // a wasm module.
 func Sandbox(g *Guest) Host { return sandbox{g: g} }
 
-func (s sandbox) Yield(frame []byte) bool {
+func (s sandbox) Yield(frame []byte) uint32 {
 	addr, length := span(frame)
-	return hostYield(addr, length) != 0
+	return hostYield(addr, length)
 }
 
-func (s sandbox) Exchange(frame []byte) []byte {
+func (s sandbox) Exchange(frame []byte) uint64 {
 	addr, length := span(frame)
-	return s.g.read(hostExchange(addr, length))
+	return hostExchange(addr, length)
 }
 
-func (s sandbox) AckPoll(token uint64) []byte { return s.g.read(hostAckPoll(token)) }
+func (s sandbox) AckPoll(handle uint64) uint32 { return hostAckPoll(handle) }
 
-func (s sandbox) ValuePoll(token uint64) []byte { return s.g.read(hostValuePoll(token)) }
+func (s sandbox) ValuePoll(handle uint64) []byte { return s.g.read(hostValuePoll(handle)) }
 
-// read takes a packed address and length the host just wrote into the inbox
-// and returns those bytes. The slice is the inbox itself: the caller decodes
-// before the next host call overwrites it, which every caller here does.
+func (s sandbox) Log(msg string) {
+	if msg == "" {
+		return
+	}
+	b := []byte(msg)
+	addr, length := span(b)
+	hostLog(addr, length)
+}
+
+// read takes a packed address and length the host wrote through the alloc
+// export and returns those bytes. The slice points into the arena; the
+// caller decodes before the arena is reset, which every caller here does.
 func (g *Guest) read(packed uint64) []byte {
 	addr, length := Unpack(packed)
-	inbox, _ := span(g.inbox)
-	if addr != inbox || uint64(length) > uint64(len(g.inbox)) {
-		panic("koine/wire: the host answered with bytes outside this guest's inbox")
+	if addr == 0 || length == 0 {
+		return nil
 	}
-	return g.inbox[:length]
+	return unsafe.Slice((*byte)(unsafe.Pointer(uintptr(addr))), length)
 }
 
 // span is the address and length of a slice in guest linear memory. Guest
@@ -84,6 +100,35 @@ func span(b []byte) (addr, length uint32) {
 	return uint32(uintptr(unsafe.Pointer(&b[0]))), uint32(len(b))
 }
 
+// AllocExport is the body of the alloc export: the host asks for room and
+// writes at the address answered.
+//
+// It TRAPS when the arena cannot serve, and that is deliberate. alloc has no
+// failure channel — the host takes whatever address it is given and writes
+// there (koinehost host.go: Run writes the delivery at the returned pointer,
+// and only reports an error if the write goes out of bounds). Address zero
+// is a perfectly valid offset in wasm linear memory, so answering zero would
+// have the host quietly writing a delivery over the bottom of this module.
+// A trap is the only refusal this door has, and the host attributes it as
+// work.finished{outcome: failure} with the reason attached.
+func (g *Guest) AllocExport(size uint32) uint32 {
+	b := g.arena.alloc(int(size))
+	if b == nil {
+		panic("koine/wire: the host asked for " + itoa(int(size)) +
+			" bytes and this guest's arena holds " + itoa(ArenaCapacity) +
+			" — answering an address it does not own would have the host write over this module")
+	}
+	if size == 0 {
+		// A zero-length slice has no first element to address; hand back
+		// the arena's own base, which is a real address the host will
+		// write nothing at.
+		addr, _ := span(g.arena.buf)
+		return addr
+	}
+	addr, _ := span(b)
+	return addr
+}
+
 // ManifestExport is the body of the manifest export: the packed address and
 // length of the derived manifest JSON, read once by the host at load.
 func (g *Guest) ManifestExport() uint64 {
@@ -91,19 +136,16 @@ func (g *Guest) ManifestExport() uint64 {
 	return Pack(addr, length)
 }
 
-// InboxExport is the body of the inbox export: the packed address and
-// capacity of the buffer the host writes frames into. The host reads it once
-// and never assumes a size.
-func (g *Guest) InboxExport() uint64 {
-	addr, _ := span(g.inbox)
-	return Pack(addr, uint32(len(g.inbox)))
-}
-
-// DeliverExport is the body of the deliver export: the host has written a
-// delivery frame of the given length into the inbox.
-func (g *Guest) DeliverExport(length uint32) uint32 {
-	if uint64(length) > uint64(len(g.inbox)) {
-		return uint32(g.refuse("the host wrote a frame larger than this guest's inbox"))
-	}
-	return uint32(g.Deliver(g.inbox[:length]))
+// ResolveExport is the body of the resolve export: the host has written a
+// delivery frame at addr, of the given length, through alloc.
+//
+// The frame is copied out of the arena before anything else happens, so the
+// arena can be reclaimed whole at both ends of the run: once here, freeing
+// the delivery the host just wrote, and once on the way out, freeing every
+// exchange answer spoken during it.
+func (g *Guest) ResolveExport(addr, length uint32) uint32 {
+	frame := append([]byte(nil), g.read(Pack(addr, length))...)
+	g.arena.reset()
+	defer g.arena.reset()
+	return uint32(g.Deliver(frame))
 }

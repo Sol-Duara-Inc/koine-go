@@ -64,3 +64,45 @@ jobs:
           go generate ./fixtures/guest/steward
           go generate ./fixtures/guest/secondpath
           git diff --exit-code
+
+  # The gate whose absence let two halves of one wire ship against two
+  # readings of it. Both repositories passed their own suites completely;
+  # every mismatch between them was invisible to any test that stayed in one
+  # repo. This job builds the committed fixture guests and hands them to the
+  # REAL koinehost.
+  #
+  # It needs a checkout of the (private) engine beside this one. CONDUIT_GO_TOKEN
+  # is a token with read access to Sol-Duara-Inc/conduit-go; GITHUB_TOKEN
+  # cannot reach another private repository on its own. If the checkout
+  # fails, this job goes red — deliberately. A crossing test that skips when
+  # it cannot cross is the same gate that was missing the first time.
+  crossing:
+    name: Crossing conformance (koine-go guest → conduit-go koinehost)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout koine-go
+        uses: actions/checkout@v4
+        with:
+          path: koine-go
+
+      - name: Checkout conduit-go (the normative host)
+        uses: actions/checkout@v4
+        with:
+          repository: Sol-Duara-Inc/conduit-go
+          ref: develop
+          path: conduit-go
+          token: ${{ secrets.CONDUIT_GO_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install TinyGo
+        run: |
+          wget https://github.com/tinygo-org/tinygo/releases/download/v0.41.1/tinygo_0.41.1_amd64.deb
+          sudo dpkg -i tinygo_0.41.1_amd64.deb
+
+      - name: The two halves meet
+        working-directory: koine-go/conformance
+        run: go test -count=1 -v ./...

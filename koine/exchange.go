@@ -29,7 +29,19 @@ type Exchange struct {
 // Answer is the response half: the acknowledging comprehender, the payload
 // already projected to the caller's lineage, and the typed outcome variant
 // that stands in the payload's place when the expected future went the other
-// way. Err is never transport — branch on it, don't defend against it.
+// way. Branch on Err; don't defend against it.
+//
+// The design's stronger sentence — "Err is NEVER transport" — is not yet
+// true of wire v1, and saying so here rather than repeating it is the point.
+// The host's breach vocabulary (koinehost.ExchangeResponse.Breached) carries
+// a genuine domain breach and a deadline or an unknown handle through the
+// same field, so a station can be handed a breach that was never a fact
+// about its domain. Separating them is a v2 field and a ruling, and both
+// sides move together when it lands (koine-go#12).
+//
+// By is subject to the same honesty: wire v1's host names no comprehender on
+// either beat, so what arrives is the party that answered rather than the
+// fulfiller that comprehended. See koine/wire.AckBroker.
 type Answer struct {
 	By   ActorRef
 	JSON []byte

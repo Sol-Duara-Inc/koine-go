@@ -57,8 +57,9 @@ func buildGuest(t *testing.T, pkg string) []byte {
 // "Nothing else" is exact rather than absolute, and the difference is worth
 // stating. Every wasm module the toolchain builds carries a handful of
 // exports the toolchain itself emits — the linear memory the host must reach
-// to write the inbox at all, the module initializer, and some compiler-rt
-// float intrinsics — and an empty main() carries the same ones. Those are
+// to write into the guest at all, the module initializer, and some
+// compiler-rt float intrinsics — and an empty main() carries the same ones.
+// Those are
 // koine/wire's ToolchainExports, named as data so both sides gate on one
 // list. What is asserted here is that the guest's OWN declarations are the
 // contract's and no more.
@@ -81,10 +82,11 @@ func TestWire_TheGuestDeclaresExactlyTheContractsExports(t *testing.T) {
 
 // TestWire_TheGuestImportsNothingButTheContractsHostFunctions pins §8's
 // claim at the only place it can be pinned: a wasm module can call exactly
-// what it imports, and the steward imports a subset of the four this
-// contract declares. It is a subset and not the whole set because the linker
-// drops what the body never reaches — the steward never gates on the fast
-// beat, so ack_poll is simply not there.
+// what it imports, and the steward imports a subset of the six this contract
+// declares. It is a subset and not the whole set because the linker drops
+// what the body never reaches — the steward never gates on the fast beat,
+// never logs, and never pulls its own delivery, so those three are simply
+// not there.
 func TestWire_TheGuestImportsNothingButTheContractsHostFunctions(t *testing.T) {
 	imports, _ := sections(t, buildGuest(t, "fixtures/guest/steward"))
 	if len(imports) == 0 {
@@ -92,8 +94,10 @@ func TestWire_TheGuestImportsNothingButTheContractsHostFunctions(t *testing.T) {
 	}
 	for _, imp := range imports {
 		module, name, found := strings.Cut(imp, ".")
-		if !found || module != wire.Module {
-			t.Errorf("the guest imports %q, from outside the one module this contract declares", imp)
+		// The host registers the same six functions under two names and
+		// admits imports from either; a guest may pick one.
+		if !found || (module != wire.Module && module != wire.Alias) {
+			t.Errorf("the guest imports %q, from outside the two modules the loader admits", imp)
 			continue
 		}
 		if !contains(wire.GuestImports, name) {
@@ -117,6 +121,11 @@ func TestWire_TheSecondPathFixtureDeclaresAnExtraExport(t *testing.T) {
 	extra := without(declared, wire.GuestExports)
 	if strings.Join(extra, ",") != "emit" {
 		t.Fatalf("the negative fixture declares %v beyond the contract, want exactly [emit]", extra)
+	}
+	// And "emit" is one of the names the loader refuses outright, so the
+	// offence is the one the engine's refusal actually tests.
+	if !contains(wire.ForbiddenExports, "emit") {
+		t.Error("the negative fixture declares a name the loader does not refuse — it would simply load")
 	}
 	// It carries the whole conforming surface as well, so the loader is
 	// refusing a module it could otherwise have loaded — the refusal is

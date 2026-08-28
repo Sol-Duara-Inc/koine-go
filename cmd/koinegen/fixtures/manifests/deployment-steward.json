@@ -1,33 +1,44 @@
 {
   "schemaVersion": "koine.manifest/1",
   "kind": "station",
-  "claim": {
+  "identity": {
     "group": "payment-engineering",
     "author": "mchen",
     "name": "deployment-steward"
   },
-  "events": [
-    {
-      "type": "dev.cdevents.deployment.recorded",
-      "direction": "emit",
-      "reconciliation": {
-        "declared": false
-      }
-    },
-    {
-      "type": "dev.cdevents.deployment.requested",
-      "direction": "emit",
-      "reconciliation": {
-        "declared": false
-      }
-    }
+  "claim": "dev.cdevents.deployment",
+  "awaits": [
+    "dev.cdevents.deployment"
+  ],
+  "complete": "all-awaited",
+  "emits": [
+    "dev.cdevents.deployment.recorded",
+    "dev.cdevents.deployment.requested"
+  ],
+  "exchanges": [
+    "history.last"
   ],
   "koine": {
     "stratum": "observer",
     "lineage": [
       "dev.cdevents.deployment"
     ],
-    "complete": "all-awaited",
+    "events": [
+      {
+        "type": "dev.cdevents.deployment.recorded",
+        "direction": "emit",
+        "reconciliation": {
+          "declared": false
+        }
+      },
+      {
+        "type": "dev.cdevents.deployment.requested",
+        "direction": "emit",
+        "reconciliation": {
+          "declared": false
+        }
+      }
+    ],
     "awaits": [
       {
         "type": "dev.cdevents.deployment",

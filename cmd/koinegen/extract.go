@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -238,21 +239,73 @@ func (x *extractor) station(name string) (manifest.Manifest, error) {
 			Reconciliation: &manifest.Reconciliation{Declared: false},
 		})
 	}
+	complete := x.complete(methods["Complete"])
+
+	// The claim the loader reads is the deepest namespace of the lineage:
+	// the stratum this station speaks from. It is reverse-DNS by the
+	// registry's own grammar, which is what the loader's claim shape
+	// requires — and koinegen refuses one that would not pass rather than
+	// letting the station find out at load.
+	claimed := ""
+	if len(body.lineage) > 0 {
+		claimed = body.lineage[0]
+	}
+	if !claimShape.MatchString(claimed) {
+		return m, fmt.Errorf("koinegen manifest: %s claims %q, which is not the reverse-domain shape the loader admits (%s) — a station's claim is the stratum it speaks from", name, claimed, manifest.ClaimPattern)
+	}
+
 	return manifest.Manifest{
 		SchemaVersion: manifest.SchemaVersion,
 		Kind:          "station",
-		Claim:         claim,
-		Events:        events,
+		Identity:      claim,
+		Claim:         claimed,
+		Awaits:        awaitTypes(awaits),
+		Complete:      complete,
+		Emits:         emitTypes(body.emits),
+		Exchanges:     exchangeNames(body.exchanges),
 		Koine: manifest.Koine{
 			Stratum:   x.bases[name],
 			Lineage:   body.lineage,
-			Complete:  x.complete(methods["Complete"]),
+			Events:    events,
 			Awaits:    awaits,
 			Emits:     body.emits,
 			Exchanges: body.exchanges,
 			Seats:     body.seats,
 		},
 	}, nil
+}
+
+// claimShape is koinehost.claimShape, transcribed. The loader refuses a
+// claim that does not match; koinegen refuses it first, by name, so a
+// registry that could not produce a loadable station says so at generation.
+var claimShape = regexp.MustCompile(manifest.ClaimPattern)
+
+// The three short forms the loader reads. They are the same facts as the
+// Koine section's long forms, said the way the loader asks for them; both
+// come from one source, so they cannot disagree.
+
+func awaitTypes(awaits []manifest.Await) []string {
+	out := make([]string, 0, len(awaits))
+	for _, a := range awaits {
+		out = append(out, a.Type)
+	}
+	return out
+}
+
+func emitTypes(emits []manifest.Emit) []string {
+	out := make([]string, 0, len(emits))
+	for _, e := range emits {
+		out = append(out, e.Type)
+	}
+	return out
+}
+
+func exchangeNames(exchanges []manifest.Speaks) []string {
+	out := make([]string, 0, len(exchanges))
+	for _, e := range exchanges {
+		out = append(out, e.Name)
+	}
+	return out
 }
 
 // isKoineType asks whether an expression names koine.<name> under whatever
@@ -266,8 +319,8 @@ func (x *extractor) isKoineType(expr ast.Expr, name string) bool {
 	return ok && pkg.Name == x.koineLocal
 }
 
-func (x *extractor) identity(station string, fn *ast.FuncDecl) (manifest.Claim, error) {
-	var claim manifest.Claim
+func (x *extractor) identity(station string, fn *ast.FuncDecl) (manifest.Identity, error) {
+	var claim manifest.Identity
 	var found bool
 	ast.Inspect(fn, func(n ast.Node) bool {
 		lit, ok := n.(*ast.CompositeLit)
