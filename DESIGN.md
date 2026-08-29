@@ -184,18 +184,46 @@ thing. But that is no different than how any code works" (owner, 2026-08-23).
 github.com/sol-duara-inc/koine-go        # THIS repository — the SDK authors import
   koine/          — core contract types, Base stations, registration; ZERO dependencies
   koine/selector/ — awaits grammar (selectors, anchors, resolved(), absent())
+  koine/codec/    — the reflection-free JSON codec generated strata are written
+                    against, so the guest target stays open (A6)              [K1]
+  koine/manifest/ — the §7 registration manifest's shape and vocabulary       [K1]
   koine/testing/  — the pure-Resolve test harness (the author's ONLY test surface)
+  koine/wire/     — the versioned guest↔host contract: frames, ABI names, the
+                    guest runtime. The ONLY coupling with the engine          [K2]
   cmd/koinegen/   — codegen: schema registry → data strata; manifest extraction
+  fixtures/guest/ — the conformance guests the engine loads: the §10 steward,
+                    and the negative fixture it must refuse by name           [K2]
+  conformance/    — a SEPARATE module: the test that crosses the repository
+                    boundary, building the guests above and handing them to
+                    the real koinehost. Excluded from the SDK module, so the
+                    zero-dependency law is untouched                          [K2]
 
 github.com/solduara/conduit-go           # the engine (existing, separate tracker)
   pkg/koinehost/  — host-side runtime: guest loader, host functions, forming,
                     auto-emission, exchange broker, registration validator
 ```
 
+Every package above imports the standard library and this module only, and an architecture
+test enforces it (A6). The bracketed phase is the one that added the directory; the four
+without a bracket are K0's.
+
 The coupling between the two repositories is exactly one thing: **the wire and host-function
 contract**, versioned in this repository (`koine/wire`) and conformance-gated on both sides
-(K4). The SDK never imports the engine; the engine vendors nothing from the SDK but the wire
-contract.
+(K4). The SDK's own module never imports the engine; the engine vendors nothing from the SDK
+but the wire contract.
+
+**The host is normative (ruled 2026-08-28, koine-go#12).** K2 first shipped two halves of one
+wire, written against two readings of it, each green in its own repository. The owner closed
+it: *"conduit-go is the product and koine-go is the SDK, so the host defines and the guest
+conforms."* `pkg/koinehost` therefore DEFINES the names, signatures, JSON keys and return
+conventions; `koine/wire` transcribes them. Where this SDK's design is arguably the better one,
+the answer is to propose it as the next wire version with **both sides moving together** — which
+is precisely the discipline that was missing.
+
+And the gate that makes it stick: `conformance/` is a separate module whose test builds the
+committed fixture guests and hands the bytes to the real `koinehost.Host.Load`. Both halves
+passing their own suites is what let them drift; only a test that crosses can catch it. A
+change to either side that the other cannot read fails there, by name.
 
 ## 4. Core contract types (`koine`)
 

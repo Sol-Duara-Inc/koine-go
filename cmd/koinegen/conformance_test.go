@@ -135,8 +135,8 @@ func TestManifest_ExtractorMatchesBehaviour(t *testing.T) {
 			t.Run(name+": "+b.name, func(t *testing.T) {
 				// The claim the manifest carries is the claim the station
 				// answers with — same source, checked from both ends.
-				if m.Claim.Group != b.out.Identity.Group || m.Claim.Author != b.out.Identity.Author || m.Claim.Name != b.out.Identity.Name {
-					t.Errorf("the manifest claims %#v; the station answers %s", m.Claim, b.out.Identity)
+				if m.Identity.Group != b.out.Identity.Group || m.Identity.Author != b.out.Identity.Author || m.Identity.Name != b.out.Identity.Name {
+					t.Errorf("the manifest claims %#v; the station answers %s", m.Identity, b.out.Identity)
 				}
 				if len(m.Koine.Awaits) != len(b.out.Awaits) {
 					t.Fatalf("the manifest declares %d awaits; the station lists %d", len(m.Koine.Awaits), len(b.out.Awaits))

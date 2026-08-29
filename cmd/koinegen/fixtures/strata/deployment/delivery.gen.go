@@ -190,43 +190,40 @@ func (v LedgerSeat) Note(text string) koine.Handle[DeploymentRecorded] {
 type handleDeploymentFinished struct {
 	broker   koine.Broker
 	exchange koine.Exchange
-	answer   *koine.Answer
+	token    koine.Token
 }
 
-// speak utters the intent once. With no host below the station it panics: an
-// exchange never fails silently, and a nil answer is not an answer.
+// speak utters the intent and waits on nothing: the utterance leaves at the
+// call site and the token names the exchange the host opened. With no host
+// below the station it panics — an exchange never fails silently, and a
+// token nobody minted is not a token.
 func (h *handleDeploymentFinished) speak() {
-	if h.answer != nil {
-		return
-	}
 	if h.broker == nil {
 		panic("koine: " + h.exchange.Name + " spoke with no host below this station — an exchange never fails silently")
 	}
-	a := h.broker.Speak(h.exchange)
-	h.answer = &a
+	h.token = h.broker.Speak(h.exchange)
 }
 
 // Received is the fast beat: someone who declared comprehension has this
-// now.
+// now. A zero Ack is an honest not-yet, never an error.
 func (h *handleDeploymentFinished) Received() koine.Ack {
-	h.speak()
-	return koine.Ack{By: h.answer.By}
+	return h.broker.Received(h.token)
 }
 
-// Value gates on completion and materializes the answer. The error is the
+// Value waits until the exchange is filled or breached, and materializes the
+// answer. Asking for it is what makes this exchange inline. The error is the
 // typed outcome variant of the expected response, never transport — branch
 // on it, don't defend against it.
 func (h *handleDeploymentFinished) Value() (DeploymentFinished, error) {
-	h.speak()
-	h.broker.Consumed(h.exchange)
+	a := h.broker.Await(h.token)
 	var v DeploymentFinished
-	if h.answer.Err != nil {
-		return v, h.answer.Err
+	if a.Err != nil {
+		return v, a.Err
 	}
-	if len(h.answer.JSON) == 0 {
+	if len(a.JSON) == 0 {
 		return v, nil
 	}
-	if err := v.UnmarshalJSON(h.answer.JSON); err != nil {
+	if err := v.UnmarshalJSON(a.JSON); err != nil {
 		return v, err
 	}
 	return v, nil
@@ -237,43 +234,40 @@ func (h *handleDeploymentFinished) Value() (DeploymentFinished, error) {
 type handleDeploymentRecorded struct {
 	broker   koine.Broker
 	exchange koine.Exchange
-	answer   *koine.Answer
+	token    koine.Token
 }
 
-// speak utters the intent once. With no host below the station it panics: an
-// exchange never fails silently, and a nil answer is not an answer.
+// speak utters the intent and waits on nothing: the utterance leaves at the
+// call site and the token names the exchange the host opened. With no host
+// below the station it panics — an exchange never fails silently, and a
+// token nobody minted is not a token.
 func (h *handleDeploymentRecorded) speak() {
-	if h.answer != nil {
-		return
-	}
 	if h.broker == nil {
 		panic("koine: " + h.exchange.Name + " spoke with no host below this station — an exchange never fails silently")
 	}
-	a := h.broker.Speak(h.exchange)
-	h.answer = &a
+	h.token = h.broker.Speak(h.exchange)
 }
 
 // Received is the fast beat: someone who declared comprehension has this
-// now.
+// now. A zero Ack is an honest not-yet, never an error.
 func (h *handleDeploymentRecorded) Received() koine.Ack {
-	h.speak()
-	return koine.Ack{By: h.answer.By}
+	return h.broker.Received(h.token)
 }
 
-// Value gates on completion and materializes the answer. The error is the
+// Value waits until the exchange is filled or breached, and materializes the
+// answer. Asking for it is what makes this exchange inline. The error is the
 // typed outcome variant of the expected response, never transport — branch
 // on it, don't defend against it.
 func (h *handleDeploymentRecorded) Value() (DeploymentRecorded, error) {
-	h.speak()
-	h.broker.Consumed(h.exchange)
+	a := h.broker.Await(h.token)
 	var v DeploymentRecorded
-	if h.answer.Err != nil {
-		return v, h.answer.Err
+	if a.Err != nil {
+		return v, a.Err
 	}
-	if len(h.answer.JSON) == 0 {
+	if len(a.JSON) == 0 {
 		return v, nil
 	}
-	if err := v.UnmarshalJSON(h.answer.JSON); err != nil {
+	if err := v.UnmarshalJSON(a.JSON); err != nil {
 		return v, err
 	}
 	return v, nil

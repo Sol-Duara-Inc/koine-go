@@ -38,15 +38,23 @@ type ExecutionBase struct{ Base }
 
 // ResolveChain adjudicates the chain. Evidence is required — the host
 // refuses an empty adjudication — because a disposition without evidence is
-// an opinion, and the record carries no opinions. With no host below this
-// station the call panics by design: a chain verb never fails silently.
+// an opinion, and the record carries no opinions.
+//
+// It panics, and as of wire v1 it panics everywhere, because there is
+// NOTHING BELOW IT TO CALL: the host's guest-visible surface is six
+// functions (yield, exchange, ack_poll, value_poll, deliver, host_log) and
+// none of them adjudicates a chain. Chain verbs are K3's — "exchanges and
+// branching" — and until that lands, a loud panic is the only honest
+// answer. The alternative, doing nothing quietly, would be a station
+// believing it had disposed of a chain that is still running.
 func (e *ExecutionBase) ResolveChain(outcome Outcome, evidence ...Evidence) {
-	panic("koine: ResolveChain spoke with no host below this station — a chain verb never fails silently")
+	panic("koine: ResolveChain has no host function to reach — chain verbs land in K3, and a chain verb never fails silently")
 }
 
 // ExtendChain re-arms the chain's clock within engine policy. The host caps
-// the extension; the station asks, it does not decide. With no host below,
-// it panics — loud, like every verb here.
+// the extension; the station asks, it does not decide. Like ResolveChain it
+// has nothing below it to call in wire v1, and says so loudly rather than
+// letting a station believe its clock was re-armed.
 func (e *ExecutionBase) ExtendChain(within time.Duration) {
-	panic("koine: ExtendChain spoke with no host below this station — a chain verb never fails silently")
+	panic("koine: ExtendChain has no host function to reach — chain verbs land in K3, and a chain verb never fails silently")
 }

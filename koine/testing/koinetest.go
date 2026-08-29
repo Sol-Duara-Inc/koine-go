@@ -113,12 +113,11 @@ type run struct {
 	stopAfter  int
 	utterances []koine.Utterance
 	spoken     []*Spoken
-	byName     map[string]*Spoken
 }
 
 // Run drives the station and returns everything it said.
 func Run(k koine.Koine, opts ...Option) Out {
-	r := &run{script: map[string]scripted{}, stopAfter: -1, byName: map[string]*Spoken{}}
+	r := &run{script: map[string]scripted{}, stopAfter: -1}
 	for _, opt := range opts {
 		opt(r)
 	}
@@ -154,33 +153,58 @@ func Run(k koine.Koine, opts ...Option) Out {
 	return out
 }
 
-// Speak answers a spoken exchange from the script. An exchange nobody
-// scripted is a loud failure, never an invented answer: the run would
-// otherwise be asserting on a fact the author never stated.
-func (r *run) Speak(ex koine.Exchange) koine.Answer {
+// Speak opens a spoken exchange from the script and waits on nothing — the
+// utterance leaves, and the token names it. An exchange nobody scripted is a
+// loud failure, never an invented answer: the run would otherwise be
+// asserting on a fact the author never stated, and a seat nobody filled is
+// exactly what registration exists to refuse by name.
+func (r *run) Speak(ex koine.Exchange) koine.Token {
 	s, ok := r.script[ex.Name]
 	if !ok {
 		panic(fmt.Sprintf("koinetest: nothing scripted for exchange %q (seat %q) — script it with koinetest.Exchange or koinetest.ExchangeFails; a harness that invented the answer would be asserting on a fact you never stated. Scripted: %v", ex.Name, ex.Seat, r.scriptedNames()))
 	}
 	spoken := &Spoken{Seat: ex.Seat, Name: ex.Name, Args: ex.Args, Consumption: manifest.Concurrent, Err: s.err}
 	r.spoken = append(r.spoken, spoken)
-	r.byName[ex.Name] = spoken
-	if s.err != nil {
-		return koine.Answer{By: koine.ActorRef("koinetest:" + ex.Seat), Err: s.err}
-	}
-	data, err := s.answer.MarshalJSON()
-	if err != nil {
-		panic(fmt.Sprintf("koinetest: the answer scripted for %q could not render itself: %v", ex.Name, err))
-	}
-	return koine.Answer{By: koine.ActorRef("koinetest:" + ex.Seat), JSON: data}
+	return koine.Token(len(r.spoken)) // one-based; zero is no exchange at all
 }
 
-// Consumed records that the body materialized this exchange's value: the
-// exchange ran in the caller's own sequence, inline.
-func (r *run) Consumed(ex koine.Exchange) {
-	if s := r.byName[ex.Name]; s != nil {
-		s.Consumption = manifest.Inline
+// Received answers the fast beat. A scripted exchange is comprehended the
+// moment it is spoken, because the harness IS the fulfiller: there is no
+// transport here to be slow.
+func (r *run) Received(t koine.Token) koine.Ack {
+	s := r.at(t)
+	if s == nil {
+		return koine.Ack{}
 	}
+	return koine.Ack{By: koine.ActorRef("koinetest:" + s.Seat)}
+}
+
+// Await waits until the exchange is filled or breached — which, against a
+// script, is immediately. Being asked to await IS the consumption beat: this
+// exchange ran in the station's own sequence, inline.
+func (r *run) Await(t koine.Token) koine.Answer {
+	s := r.at(t)
+	if s == nil {
+		panic(fmt.Sprintf("koinetest: awaited token %d, which names no exchange this run opened", t))
+	}
+	s.Consumption = manifest.Inline
+	by := koine.ActorRef("koinetest:" + s.Seat)
+	scripted := r.script[s.Name]
+	if scripted.err != nil {
+		return koine.Answer{By: by, Err: scripted.err}
+	}
+	data, err := scripted.answer.MarshalJSON()
+	if err != nil {
+		panic(fmt.Sprintf("koinetest: the answer scripted for %q could not render itself: %v", s.Name, err))
+	}
+	return koine.Answer{By: by, JSON: data}
+}
+
+func (r *run) at(t koine.Token) *Spoken {
+	if t == 0 || int(t) > len(r.spoken) {
+		return nil
+	}
+	return r.spoken[t-1]
 }
 
 func (r *run) scriptedNames() []string {

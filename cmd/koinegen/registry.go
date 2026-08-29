@@ -116,6 +116,12 @@ type Param struct {
 	Type string `json:"type"`
 }
 
+// wireYieldTypeKey mirrors wire.YieldTypeKey. The registry cannot import
+// koine/wire — a build tool has no business depending on the guest contract
+// — so the one key they must agree about is written down in both places and
+// pinned by a test.
+const wireYieldTypeKey = "type"
+
 var (
 	namespacePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(\.[a-z0-9][a-z0-9-]*)+$`)
 	identPattern     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -350,6 +356,16 @@ func (ns *Namespace) judgeTypes() error {
 			}
 			if f.JSON == "" {
 				return fmt.Errorf("koinegen: %s: %s.%s declares no wire key", ns.file, t.Name, f.Name)
+			}
+			// The yield frame writes the event type beside the object's
+			// own keys, flat, because the host stores those very bytes
+			// as the payload — a wrapper would put the wire's paperwork
+			// in the record instead of the station's speech. A stratum
+			// key spelled "type" would collide with it, so it is
+			// refused here rather than discovered as a corrupted
+			// emission.
+			if f.JSON == wireYieldTypeKey {
+				return fmt.Errorf("koinegen: %s: %s.%s uses the wire key %q, which the yield frame writes the event type into — a stratum may not spell a key that way", ns.file, t.Name, f.Name, wireYieldTypeKey)
 			}
 			if _, err := ns.resolveFieldType(f.Type); err != nil {
 				return fmt.Errorf("koinegen: %s: %s.%s: %w", ns.file, t.Name, f.Name, err)

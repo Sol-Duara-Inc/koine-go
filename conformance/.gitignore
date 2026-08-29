@@ -1,0 +1,5 @@
+# go.work is how a developer points this module at a conduit-go checkout
+# somewhere other than the sibling path CI uses. It is deliberately not
+# committed: the committed replace is the one CI proves.
+go.work
+go.work.sum

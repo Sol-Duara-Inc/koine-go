@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   k0-gate:
@@ -18,6 +18,15 @@ jobs:
         with:
           go-version: '1.26'
 
+      # TinyGo is installed BEFORE the tests, not after. koine/wire's surface
+      # tests build the fixture guests and read the export and import
+      # sections off the binary; with no TinyGo on PATH they skip, and a
+      # skipped gate is a gate that is not there.
+      - name: Install TinyGo
+        run: |
+          wget https://github.com/tinygo-org/tinygo/releases/download/v0.41.1/tinygo_0.41.1_amd64.deb
+          sudo dpkg -i tinygo_0.41.1_amd64.deb
+
       - name: gofmt
         run: test -z "$(gofmt -l .)"
 
@@ -27,13 +36,73 @@ jobs:
       - name: go test
         run: go test -race -count=1 -v ./...
 
-      - name: Install TinyGo
-        run: |
-          wget https://github.com/tinygo-org/tinygo/releases/download/v0.41.1/tinygo_0.41.1_amd64.deb
-          sudo dpkg -i tinygo_0.41.1_amd64.deb
-
       - name: tinygo build
         run: tinygo build -o /dev/null -target wasm-unknown ./internal/tinygocheck
 
       - name: wasip1 wasm build
         run: GOOS=wasip1 GOARCH=wasm go build -o /dev/null ./internal/tinygocheck
+
+      # The whole SDK under the standard toolchain's wasm target, not just
+      # the compile probe: koine/wire's host bindings only exist under a wasm
+      # build, and E-A says both toolchains are supported.
+      - name: wasip1 wasm build (whole module)
+        run: GOOS=wasip1 GOARCH=wasm go build ./...
+
+      # Both fixture guests, built the way the engine builds them. The
+      # negative one must build too — a refusal fixture that does not compile
+      # is a refusal test with nothing to refuse.
+      - name: guest fixtures build under TinyGo
+        run: |
+          tinygo build -o /dev/null -target wasm-unknown ./fixtures/guest/steward
+          tinygo build -o /dev/null -target wasm-unknown ./fixtures/guest/secondpath
+
+      # Generation is a function of its inputs. Regenerating everything must
+      # move nothing.
+      - name: go generate leaves no diff
+        run: |
+          go generate ./cmd/koinegen/fixtures/
+          go generate ./fixtures/guest/steward
+          go generate ./fixtures/guest/secondpath
+          git diff --exit-code
+
+  # The gate whose absence let two halves of one wire ship against two
+  # readings of it. Both repositories passed their own suites completely;
+  # every mismatch between them was invisible to any test that stayed in one
+  # repo. This job builds the committed fixture guests and hands them to the
+  # REAL koinehost.
+  #
+  # It needs a checkout of the (private) engine beside this one. CONDUIT_GO_TOKEN
+  # is a token with read access to Sol-Duara-Inc/conduit-go; GITHUB_TOKEN
+  # cannot reach another private repository on its own. If the checkout
+  # fails, this job goes red — deliberately. A crossing test that skips when
+  # it cannot cross is the same gate that was missing the first time.
+  crossing:
+    name: Crossing conformance (koine-go guest → conduit-go koinehost)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout koine-go
+        uses: actions/checkout@v4
+        with:
+          path: koine-go
+
+      - name: Checkout conduit-go (the normative host)
+        uses: actions/checkout@v4
+        with:
+          repository: Sol-Duara-Inc/conduit-go
+          ref: develop
+          path: conduit-go
+          token: ${{ secrets.CONDUIT_GO_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install TinyGo
+        run: |
+          wget https://github.com/tinygo-org/tinygo/releases/download/v0.41.1/tinygo_0.41.1_amd64.deb
+          sudo dpkg -i tinygo_0.41.1_amd64.deb
+
+      - name: The two halves meet
+        working-directory: koine-go/conformance
+        run: go test -count=1 -v ./...

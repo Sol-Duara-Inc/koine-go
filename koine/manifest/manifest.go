@@ -7,17 +7,20 @@
 // parser for author-supplied manifests and no builder an author could reach:
 // it is the vocabulary and the writer, nothing else.
 //
-// The shape is the engine's manifest shape family (A2) — claim, tool,
-// connection shape, and declared events each with its reconciliation entry —
-// extended with the Koine fields: stratum, lineage, awaits, emits, and the
-// consumption topology. One loader serves both kinds of guest, so nothing
-// here invents a second door.
+// The shape is the ENGINE'S, and the engine is normative (ruled 2026-08-28,
+// koine-go#12): conduit-go's koinehost.Manifest defines the keys the loader
+// reads at the `manifest` export, and this package writes exactly those,
+// with exactly those spellings, above the line.
 //
-// The concrete field spellings of the engine's half of the family are pinned
-// against the real loader in K2/K4, where both sides of the wire contract are
-// gated. Until that gate exists this package is the SDK's statement of the
-// shape, and it is versioned so a mismatch is a named refusal rather than a
-// silent drift.
+// Below the line — under the "koine" key — ride the Koine fields the loader
+// does not read and does not need to: stratum, lineage, the content-hash
+// pinned awaits, the consumption topology, the seats and their permissions,
+// the declared events with their reconciliation entries. The host unmarshals
+// into its own struct and ignores what it does not know, so one document
+// serves both readers without either one having to grow a field for the
+// other's benefit. A2's "one loader serves both kinds of guest" is what this
+// arrangement is for; a superset is how a manifest keeps that promise while
+// still saying more than the loader asks.
 package manifest
 
 // SchemaVersion names the manifest shape this package writes.
@@ -60,24 +63,39 @@ func (c Consumption) ChainRole() string {
 }
 
 // Manifest is one station's registration, derived from its code.
+//
+// Everything down to Exchanges is koinehost.Manifest, key for key. Koine is
+// the extension the loader ignores.
 type Manifest struct {
-	SchemaVersion string      `json:"schemaVersion"`
-	Kind          string      `json:"kind"` // "station"; "plugin" when a tool is served
-	Claim         Claim       `json:"claim"`
-	Tool          string      `json:"tool,omitempty"`
-	Connection    *Connection `json:"connection,omitempty"`
-	Events        []Event     `json:"events"`
-	Koine         Koine       `json:"koine"`
+	SchemaVersion string   `json:"schemaVersion"`
+	Kind          string   `json:"kind"` // "station"; "plugin" when a tool is served
+	Identity      Identity `json:"identity"`
+	Claim         string   `json:"claim"`
+	Awaits        []string `json:"awaits,omitempty"`
+	Complete      string   `json:"complete,omitempty"`
+	Emits         []string `json:"emits,omitempty"`
+	Exchanges     []string `json:"exchanges,omitempty"`
+	Koine         Koine    `json:"koine"`
 }
 
-// Claim is the identity the station carries. The SDK carries the claim and
+// Identity is the tuple the station carries. The SDK carries the claim and
 // never verifies it (A8); the door verifies it against what login already
 // established.
-type Claim struct {
-	Group  string `json:"group"`
-	Author string `json:"author"`
+type Identity struct {
+	Group  string `json:"group,omitempty"`
+	Author string `json:"author,omitempty"`
 	Name   string `json:"name"`
 }
+
+// ClaimPattern is the grammar the loader holds a claim to: a reverse-domain
+// name, at least two labels. It is carried here as data so koinegen can
+// refuse a claim the loader would refuse, at generation time, rather than
+// letting a station find out at load.
+//
+// Transcribed from koinehost.claimShape. A station's claim is the deepest
+// namespace of its lineage — the stratum it speaks from — which is already
+// reverse-DNS by the registry's own grammar.
+const ClaimPattern = `^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$`
 
 // Connection is the shape of connection a plugin station needs — never the
 // location. The operator owns the address and the credential; the deployment
@@ -106,15 +124,20 @@ type Reconciliation struct {
 	Enrichment string `json:"enrichment,omitempty"`
 }
 
-// Koine is the extension: everything the paradigm adds to the family.
+// Koine is the extension: everything the paradigm adds that the loader does
+// not read. Nothing here is a second copy of a fact above the line — these
+// are the same facts said in full, where the shorter forms above are what
+// the loader asked for.
 type Koine struct {
-	Stratum   string     `json:"stratum"` // observer | execution
-	Lineage   []string   `json:"lineage"` // namespace lineage, deepest first
-	Complete  string     `json:"complete"`
-	Awaits    []Await    `json:"awaits"`
-	Emits     []Emit     `json:"emits"`
-	Exchanges []Speaks   `json:"exchanges"`
-	Seats     []SeatNeed `json:"seats"`
+	Stratum    string      `json:"stratum"` // observer | execution
+	Lineage    []string    `json:"lineage"` // namespace lineage, deepest first
+	Tool       string      `json:"tool,omitempty"`
+	Connection *Connection `json:"connection,omitempty"`
+	Events     []Event     `json:"events"`
+	Awaits     []Await     `json:"awaits"`
+	Emits      []Emit      `json:"emits"`
+	Exchanges  []Speaks    `json:"exchanges"`
+	Seats      []SeatNeed  `json:"seats"`
 }
 
 // Await is one declared expectation, content-hash pinned so the door can
