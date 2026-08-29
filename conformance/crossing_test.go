@@ -507,3 +507,127 @@ func TestCrossing_TheManifestIsTheHostsShape(t *testing.T) {
 		}
 	}
 }
+
+// TestCrossing_ANilBrokerIsAttributedBelowTheLine is the composition the
+// second review asked to be discovered here rather than at a merge:
+// conduit-go#197 wires stations with Broker: nil, and every exchange a
+// station speaks then stops.
+//
+// What is asserted is not that it works — it cannot work — but that the
+// RECORD names the right party. A stoppage below the line must not arrive as
+// "trap in resolve", which is what koinehost writes when the author's own
+// code panics.
+func TestCrossing_ANilBrokerIsAttributedBelowTheLine(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "deployment-steward", buildGuest(t, "fixtures/guest/steward"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer station.Close(context.Background())
+
+	emitter := koinehost.NewRecordingEmitter()
+	res, runErr := station.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  emitter,
+		Broker:   nil, // exactly what conduit-go#197 wires
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "run-crossing-nil",
+			ChainID:   "chain-crossing-nil",
+			Event: json.RawMessage(`{"outcome":"failure","artifactId":"sha256:bad",` +
+				`"environment":"prod"}`),
+		},
+	})
+
+	// The guest stops rather than trapping, so the status is the one this
+	// contract reserves for a stoppage below the line.
+	if res.Status != uint32(wire.Unanswered) {
+		t.Fatalf("resolve answered %d, want %d (unanswered): %v", res.Status, wire.Unanswered, runErr)
+	}
+
+	// And the reason reaches the record's own diagnostic channel, marked.
+	var attributed []string
+	for _, line := range res.Logs {
+		if strings.HasPrefix(line, wire.FaultPrefix) {
+			attributed = append(attributed, line)
+		}
+	}
+	if len(attributed) != 1 {
+		t.Fatalf("the host heard %d attributed lines, want one: %v", len(attributed), res.Logs)
+	}
+	if !strings.Contains(attributed[0], "would not open") {
+		t.Errorf("the attributed line said %q", attributed[0])
+	}
+
+	// Nothing was stored. The steward's variant branch ran and spoke; the
+	// gate was closed, so no event names a deployment that never happened.
+	if len(res.Yields) != 0 || len(emitter.Yields) != 0 {
+		t.Fatalf("a stoppage below the line still stored %#v", res.Yields)
+	}
+
+	// The record does not call this the author's trap. That sentence is
+	// koinehost's for a guest that panicked in its own code, and this
+	// guest did not.
+	var finished *koinehost.WorkEvent
+	for i := range emitter.WorkEvents {
+		if emitter.WorkEvents[i].Type == koinehost.WorkFinished {
+			finished = &emitter.WorkEvents[i]
+		}
+	}
+	if finished == nil {
+		t.Fatalf("no work.finished was emitted: %#v", emitter.WorkEvents)
+	}
+	if strings.Contains(finished.Error, "trap in resolve") {
+		t.Errorf("a stoppage below the line was recorded as the author's trap: %q", finished.Error)
+	}
+	if !strings.Contains(finished.Error, "status 3") {
+		t.Errorf("work.finished does not carry the attributing status: %q", finished.Error)
+	}
+	// wire v1 gives the engine only one terminal disposition, so this is
+	// still a failure outcome. Saying which party caused it is what this
+	// SDK can do; a disposition that says so is conduit-go's to add.
+	if finished.Outcome != koinehost.OutcomeFailure {
+		t.Errorf("outcome = %q", finished.Outcome)
+	}
+}
+
+// TestCrossing_AFulfillerThatAnswersWithNothingStoresNothing pins the third
+// of the second review's "same shape" bullets. A 200 with no value used to
+// hand the body a zero value, which the steward then wrote into a deploy —
+// a stored event naming a deployment that never happened.
+func TestCrossing_AFulfillerThatAnswersWithNothingStoresNothing(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "deployment-steward", buildGuest(t, "fixtures/guest/steward"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer station.Close(context.Background())
+
+	broker := koinehost.NewMemoryBroker()
+	broker.RegisterHandler("history.last", func(koinehost.ExchangeRequest) koinehost.ExchangeResponse {
+		return koinehost.ExchangeResponse{Status: 200} // filled, with nothing in it
+	})
+	emitter := koinehost.NewRecordingEmitter()
+
+	res, _ := station.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  emitter,
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "run-crossing-empty",
+			ChainID:   "chain-crossing-empty",
+			Event: json.RawMessage(`{"outcome":"failure","artifactId":"sha256:bad",` +
+				`"environment":"prod"}`),
+		},
+	})
+
+	if res.Status != uint32(wire.Unanswered) {
+		t.Fatalf("resolve answered %d, want %d (unanswered)", res.Status, wire.Unanswered)
+	}
+	for _, y := range emitter.Yields {
+		t.Errorf("an empty answer was stored as %s: %s", y.Type, y.Payload)
+	}
+}

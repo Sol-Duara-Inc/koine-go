@@ -117,19 +117,39 @@ const MaxManifestBytes = 64 << 10
 
 // Outcome is what resolve answers with. The host reads ZERO as success and
 // everything else as work.finished{outcome: failure} with the status
-// attributed. A trap is not in this list because a trap does not return.
+// attributed.
+//
+// A trap is not in this list because a trap does not return — and that is
+// the whole point of the list. koinehost records a trap as "trap in
+// resolve", which names the AUTHOR. Every non-zero value below names
+// something else: the host could not take an utterance, could not answer an
+// exchange, or handed over a frame this build cannot read. None of those are
+// the body's doing, so none of them trap, and the number the host reads says
+// which one happened. The words behind it go through host_log with
+// FaultPrefix in front of them and arrive in koinehost's Result.Logs.
+//
+// The engine still records all of these as work.finished{outcome: failure},
+// because that is the only terminal disposition wire v1 gives it. A
+// disposition that says "the fabric stopped this, not the station" is
+// conduit-go's to add; what this SDK can do is stop claiming the author did
+// it, and it does.
 type Outcome uint32
 
 const (
-	// Resolved: the body ran to completion.
+	// Resolved: the body ran to completion. The author's.
 	Resolved Outcome = 0
 	// Cancelled: the host would not take a yield, so nothing after the
-	// refusal was spoken.
+	// refusal was spoken. Below the line.
 	Cancelled Outcome = 1
 	// Refused: the frame could not be read — a foreign version, a
 	// malformed projection, a station this guest does not serve. Nothing
-	// ran, and nothing is stored on refusal (A9).
+	// ran, and nothing is stored on refusal (A9). Below the line.
 	Refused Outcome = 2
+	// Unanswered: an exchange the body spoke stopped for a reason below
+	// the line — no broker wired, no handle, no answer, or an answer that
+	// was neither filled nor breached. The body may have carried on;
+	// nothing it said afterwards was stored. Below the line.
+	Unanswered Outcome = 3
 )
 
 // String names an outcome for a person reading a log.
@@ -141,9 +161,17 @@ func (o Outcome) String() string {
 		return "cancelled"
 	case Refused:
 		return "refused"
+	case Unanswered:
+		return "unanswered"
 	}
 	return "unknown"
 }
+
+// AttributedToAuthor reports whether an outcome is the station author's to
+// answer for. Only a completed run is — everything else this type can say
+// happened below the line, and a trap, which is the author's, is not
+// representable here because it never returns.
+func (o Outcome) AttributedToAuthor() bool { return o == Resolved }
 
 // Pack folds an address and a length into the single i64 that crosses the
 // boundary. High half address, low half length — the host's convention,

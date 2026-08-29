@@ -427,10 +427,16 @@ func TestWire_NothingIsStoredOnRefusal(t *testing.T) {
 	}
 }
 
-// TestWire_AHostThatCannotAnswerIsLoud pins that a seat which will not open,
-// or an answer that is not an answer, traps rather than handing the body a
-// zero value it would treat as truth. The host attributes the trap.
-func TestWire_AHostThatCannotAnswerIsLoud(t *testing.T) {
+// TestWire_AStoppageBelowTheLineIsNotTheAuthorsTrap is the second review's
+// blocker, pinned.
+//
+// A tool's silence, or a deployment that wired no broker, used to reach the
+// record as "trap in resolve" — the author's fault, for a condition that was
+// never theirs. It now stops the resolve cooperatively: the reason is spoken
+// once through the host's own diagnostic channel with FaultPrefix in front
+// of it, every subsequent yield is gated so nothing is stored, and resolve
+// answers Unanswered — a number no author can cause.
+func TestWire_AStoppageBelowTheLineIsNotTheAuthorsTrap(t *testing.T) {
 	cases := map[string]struct {
 		host   *scriptHost
 		wantIn string
@@ -444,37 +450,124 @@ func TestWire_AHostThatCannotAnswerIsLoud(t *testing.T) {
 		"the host answered with bytes this build cannot read": {
 			host: &scriptHost{badValue: true}, wantIn: "cannot read",
 		},
+		"the fulfiller answered with no value at all": {
+			host: &scriptHost{answer: wire.AnswerFrame{Status: 200}}, wantIn: "with no value",
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatal("the guest carried on without an answer")
+			guest := wire.New(stewardStation(&station.DeploymentSteward{}), c.host)
+			got := guest.Deliver(stewardDelivery(failedDeployment))
+
+			if got != wire.Unanswered {
+				t.Fatalf("deliver = %s, want unanswered", got)
+			}
+			if got.AttributedToAuthor() {
+				t.Error("a stoppage below the line was attributed to the author")
+			}
+			if !strings.Contains(guest.Fault(), c.wantIn) {
+				t.Fatalf("the fault did not say %q: %s", c.wantIn, guest.Fault())
+			}
+
+			// It reaches the record's own diagnostic channel, once,
+			// marked so it can be attributed without parsing prose.
+			var marked []string
+			for _, line := range c.host.logs {
+				if strings.HasPrefix(line, wire.FaultPrefix) {
+					marked = append(marked, line)
 				}
-				msg, ok := r.(string)
-				if !ok || !strings.Contains(msg, "koine/wire") || !strings.Contains(msg, c.wantIn) {
-					t.Fatalf("the trap said %v", r)
-				}
-			}()
-			wire.New(stewardStation(&station.DeploymentSteward{}), c.host).
-				Deliver(stewardDelivery(failedDeployment))
+			}
+			if len(marked) != 1 {
+				t.Fatalf("the host heard %d attributed lines, want one: %v", len(marked), c.host.logs)
+			}
+			if !strings.Contains(marked[0], c.wantIn) {
+				t.Errorf("the logged line said %q", marked[0])
+			}
+
+			// And the gate is closed: the steward's variant branch runs
+			// and speaks, and nothing it says is stored.
+			if len(c.host.yields) != 0 {
+				t.Fatalf("a stoppage below the line still stored %#v", c.host.yields)
+			}
 		})
 	}
 }
 
-// TestWire_TheOnlyEmitPathIsYield pins the claim §8 makes at the only place
-// this side of the boundary can pin it: a station that speaks something no
-// stratum generated does not get a second channel to speak it through.
-func TestWire_TheOnlyEmitPathIsYield(t *testing.T) {
+// TestWire_AStoppageIsHandedToTheBodyAsStoppedNotAsAVariant pins the
+// distinction the ruling turns on. A Variant is the expected future going
+// the other way — a fact about the body's domain, and a valid response. A
+// Stopped is a fact about the machinery underneath. A body may branch on
+// either; only one of them is about its work.
+func TestWire_AStoppageIsHandedToTheBodyAsStoppedNotAsAVariant(t *testing.T) {
+	t.Run("a breach is a Variant, and the body's speech is stored", func(t *testing.T) {
+		host := &scriptHost{answer: wire.AnswerFrame{
+			Status: 404, Error: "no deployment of this subject has ever succeeded", Breached: true,
+		}}
+		guest := wire.New(stewardStation(&errorNamer{}), host)
+		if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
+			t.Fatalf("deliver = %s (%s)", got, guest.Fault())
+		}
+		if len(host.yields) != 1 {
+			t.Fatalf("a breach branch stored %d utterances, want one", len(host.yields))
+		}
+		if got := host.yields[0]["artifact"]; got != "variant:no deployment of this subject has ever succeeded" {
+			t.Errorf("the body was handed %v", got)
+		}
+		if guest.Fault() != "" {
+			t.Errorf("a valid response was recorded as a stoppage: %s", guest.Fault())
+		}
+	})
+
+	t.Run("a stoppage is a Stopped, and nothing is stored", func(t *testing.T) {
+		host := &scriptHost{noHandle: true}
+		guest := wire.New(stewardStation(&errorNamer{}), host)
+		if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Unanswered {
+			t.Fatalf("deliver = %s", got)
+		}
+		if len(host.yields) != 0 {
+			t.Fatalf("a stoppage stored %#v", host.yields)
+		}
+	})
+}
+
+// errorNamer speaks the CLASS of whatever error it was handed, so a test can
+// witness which of the two the body actually received.
+type errorNamer struct{ koine.ObserverBase }
+
+func (errorNamer) Identity() koine.Identity {
+	return koine.Identity{Group: "payment-engineering", Author: "mchen", Name: "deployment-steward"}
+}
+func (errorNamer) Awaits() []selector.Selector { return selector.List(deployment.Resolved()) }
+func (errorNamer) Complete() koine.Contract    { return koine.DefaultAllAwaited }
+func (errorNamer) Resolve(d koine.Delivery, yield koine.Yield) {
+	dep := d.(deployment.ResolvedDelivery)
+	_, err := dep.History().Last(koine.Success).Value()
+	label := "filled"
+	switch e := err.(type) {
+	case *wire.Variant:
+		label = "variant:" + e.Error()
+	case *wire.Stopped:
+		label = "stopped:" + e.Why
+	}
+	yield(deployment.DeploymentRecorded{Artifact: deployment.ArtifactRef(label)})
+}
+
+// TestWire_AnAuthorsTrapIsStillTheAuthors keeps the other half of the
+// distinction honest. Cooperative stopping is for what the host did; a body
+// that cannot be run still traps, and koinehost still records that as the
+// author's trap — which is the truth.
+func TestWire_AnAuthorsTrapIsStillTheAuthors(t *testing.T) {
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("an ungenerated utterance crossed the boundary")
+			t.Fatal("an ungenerated utterance did not trap")
 		}
 		msg, ok := r.(string)
 		if !ok || !strings.Contains(msg, "no second channel") {
 			t.Fatalf("the trap said %v", r)
+		}
+		if strings.Contains(msg, wire.FaultPrefix) {
+			t.Error("an author's trap was dressed up as a stoppage below the line")
 		}
 	}()
 	wire.New(stewardStation(&homemadeSpeaker{}), &scriptHost{}).
