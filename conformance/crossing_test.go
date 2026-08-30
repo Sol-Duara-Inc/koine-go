@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/sol-duara-inc/koine-go/koine/wire"
+	enginekoine "github.com/solduara/conduit-go/pkg/koine"
 	"github.com/solduara/conduit-go/pkg/koinehost"
 	"github.com/solduara/conduit-go/pkg/reconcile"
 	"github.com/solduara/conduit-go/pkg/server"
@@ -1136,6 +1137,36 @@ func TestCrossing_TheHookFormReachesTheBoundaryToo(t *testing.T) {
 	}
 }
 
+// TestCrossing_TheUnfilledSentinelIsTheENGINES, not a copy of it that happens
+// to agree today. THE GAP THIS CLOSES: every other test of this seam — here
+// and in the SDK — builds the host's 501 answer out of wire.UnfilledPrefix and
+// then matches with the same symbol, so stimulus and matcher come from one
+// constant and the comparison cannot fail however far that constant drifts
+// from the engine. PROVEN: drifting UnfilledPrefix by one character left the
+// whole crossing module green (ok 14.852s).
+//
+// That defeats this module's stated purpose. Its own header records that K2
+// "shipped against two different readings of one wire" and that this module
+// exists "so that can never happen again" — and the sentinel it failed to
+// guard is the one the SDK calls "the exact text of the engine's own
+// koine.ErrNotImplemented".
+//
+// The engine is importable HERE and nowhere else in this repository, so this
+// is the only place the real comparison can be made.
+//
+// If it ever fails: isUnfilled stops matching, an empty parent seat falls to
+// the answer.Stoppage() branch, faultBelowTheLine fires, and every child of a
+// declared-but-not-loaded parent ends Unanswered — the day the engine reworks
+// that sentence, with CI green.
+func TestCrossing_TheUnfilledSentinelIsTheEngines(t *testing.T) {
+	if wire.UnfilledPrefix != enginekoine.ErrNotImplemented.Error() {
+		t.Fatalf("wire.UnfilledPrefix = %q, engine koine.ErrNotImplemented = %q — the SDK "+
+			"recognises an unfilled parent seat by this exact text, so the two must be the "+
+			"same string, not two strings that happen to agree",
+			wire.UnfilledPrefix, enginekoine.ErrNotImplemented.Error())
+	}
+}
+
 // TestCrossing_AnUnfilledParentIsDeterminate makes the unfilled-seat branch
 // live across the real boundary. conduit-go#210 pins that the host answers a
 // declared-but-not-loaded parent with Status 501, an Error beginning with
@@ -1153,8 +1184,11 @@ func TestCrossing_AnUnfilledParentIsDeterminate(t *testing.T) {
 	broker := koinehost.NewMemoryBroker()
 	broker.RegisterHandler(wire.TypePassUp, func(koinehost.ExchangeRequest) koinehost.ExchangeResponse {
 		return koinehost.ExchangeResponse{
-			Status:   501,
-			Error:    wire.UnfilledPrefix + `: no controller serves "com.example.payments-engineering"`,
+			Status: 501,
+			// The ENGINE's own sentinel, not the SDK's copy of it: the
+			// stimulus and the matcher must not come from one symbol, or
+			// this test passes however far that symbol drifts.
+			Error:    enginekoine.ErrNotImplemented.Error() + `: no controller serves "com.example.payments-engineering"`,
 			Breached: false,
 		}
 	})
