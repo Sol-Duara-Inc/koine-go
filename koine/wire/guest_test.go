@@ -256,13 +256,20 @@ func TestWire_ABreachIsATypedVariantNeverTransport(t *testing.T) {
 		t.Errorf("the variant did not reach the body: %v", host.yields[0])
 	}
 
-	// A breach the host named without setting the flag is the same fact.
-	unflagged := &scriptHost{answer: wire.AnswerFrame{Status: 500, Error: "gone"}}
-	if got := wire.New(stewardStation(&variantSpeaker{}), unflagged).Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
-		t.Fatalf("deliver = %s", got)
+	// An error the host named WITHOUT the flag is not a breach at all —
+	// conduit-go#200 split them, so this is Conduit saying it could not
+	// answer, and it stops the run rather than reaching the body as a
+	// finding about its domain.
+	unflagged := &scriptHost{answer: wire.AnswerFrame{Status: 504, Error: "context deadline exceeded"}}
+	guest = wire.New(stewardStation(&variantSpeaker{}), unflagged)
+	if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Unanswered {
+		t.Fatalf("a deadline reached the body as a domain variant: %s", got)
 	}
-	if unflagged.yields[0]["artifact"] != "gone" {
-		t.Errorf("an unflagged breach read as filled: %v", unflagged.yields[0])
+	if len(unflagged.yields) != 0 {
+		t.Errorf("a stoppage below the line still stored %#v", unflagged.yields)
+	}
+	if !strings.Contains(guest.Fault(), "504") {
+		t.Errorf("the fault did not name the status: %s", guest.Fault())
 	}
 
 	// A breach with a status and no words still reads as a breach, and

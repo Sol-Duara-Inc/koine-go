@@ -271,6 +271,7 @@ func (x *extractor) station(name string) (manifest.Manifest, error) {
 			Emits:     body.emits,
 			Exchanges: body.exchanges,
 			Seats:     body.seats,
+			PassUp:    body.passUp,
 		},
 	}, nil
 }
@@ -494,6 +495,7 @@ type resolved struct {
 	emits     []manifest.Emit
 	exchanges []manifest.Speaks
 	seats     []manifest.SeatNeed
+	passUp    manifest.PassUp
 }
 
 func (x *extractor) resolveBody(station string, fn *ast.FuncDecl) (resolved, error) {
@@ -540,6 +542,11 @@ func (x *extractor) resolveBody(station string, fn *ast.FuncDecl) (resolved, err
 	}
 	out.exchanges = spoken
 	out.seats = seatNeeds(delivery, spoken)
+
+	out.passUp, err = x.passUpSurface(station, b)
+	if err != nil {
+		return out, err
+	}
 	return out, nil
 }
 

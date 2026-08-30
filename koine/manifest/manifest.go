@@ -138,6 +138,40 @@ type Koine struct {
 	Emits      []Emit      `json:"emits"`
 	Exchanges  []Speaks    `json:"exchanges"`
 	Seats      []SeatNeed  `json:"seats"`
+	PassUp     PassUp      `json:"passUp"`
+}
+
+// PassUp is the station's pass-up surface, derived from its body: how it
+// hands its parent the event object as the walk happens.
+//
+// It rides UNDER the koine key and nowhere else. The host is normative about
+// the keys it reads, and koinehost.Manifest has no pass-up field yet — the
+// paired ticket (conduit-go#210) has not been written. Emitting an
+// above-the-line key the loader does not read would be this SDK deciding the
+// host's half of a contract, which is the one thing K2 established it must
+// not do. When #210 names a key, it moves up; the derivation does not change.
+type PassUp struct {
+	// Declared says whether this station's body touches the pass-up at
+	// all. It is written even when false, so the absence is stated rather
+	// than inferred from a missing key — the same posture Reconciliation
+	// takes.
+	Declared bool `json:"declared"`
+	// Verbs are the ones the body speaks, in the vocabulary the author
+	// wrote: passUp, await, withhold.
+	Verbs []string `json:"verbs,omitempty"`
+	// Hooks are the named hooks the station declares: pre, post.
+	Hooks []string `json:"hooks,omitempty"`
+	// Awaits says the station asks for its parent's conclusion. Asking is
+	// declaring: it is how a station says a parent's finding will arrive
+	// as a value it handles, rather than unwinding the walk.
+	Awaits bool `json:"awaits"`
+	// Type and WithholdType are the reserved exchange types this build
+	// speaks. They are declared so a host can refuse a spelling mismatch
+	// at load instead of misrouting at run time — and because neither
+	// string is asserted anywhere in the engine yet, saying them out loud
+	// is what makes a disagreement visible.
+	Type         string `json:"type,omitempty"`
+	WithholdType string `json:"withholdType,omitempty"`
 }
 
 // Await is one declared expectation, content-hash pinned so the door can

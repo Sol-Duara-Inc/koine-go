@@ -25,7 +25,7 @@ var lastGood = deployment.SeedDeploymentFinished("payments-api", koine.Success, 
 // The station's failure branch consumes history.last inline and speaks the
 // deploy that follows from the answer.
 func TestHarness_DrivesTheStewardWithAScriptedExchange(t *testing.T) {
-	out := koinetest.Run(station.DeploymentSteward{},
+	out := koinetest.Run(&station.DeploymentSteward{},
 		koinetest.Deliver(deployment.ResolvedDelivery{
 			Subject:     "payments-api",
 			Outcome:     koine.Failure,
@@ -80,7 +80,7 @@ func TestHarness_DrivesTheStewardWithAScriptedExchange(t *testing.T) {
 // harness observes rather than drives: the success branch needs no exchange,
 // and scripting one does not conjure a call.
 func TestHarness_TheSuccessBranchSpeaksWithoutSpeakingToAnyone(t *testing.T) {
-	out := koinetest.Run(station.DeploymentSteward{},
+	out := koinetest.Run(&station.DeploymentSteward{},
 		koinetest.Deliver(deployment.ResolvedDelivery{
 			Outcome:     koine.Success,
 			ArtifactID:  "sha256:fine",
@@ -105,7 +105,7 @@ func TestHarness_TheSuccessBranchSpeaksWithoutSpeakingToAnyone(t *testing.T) {
 // expected response, and the body branches on it like any other future.
 func TestHarness_TheTypedVariantIsBranchedOnNotDefendedAgainst(t *testing.T) {
 	nothingGood := errors.New("no deployment of this subject has ever succeeded")
-	out := koinetest.Run(station.DeploymentSteward{},
+	out := koinetest.Run(&station.DeploymentSteward{},
 		koinetest.Deliver(deployment.ResolvedDelivery{
 			Outcome:     koine.Failure,
 			ArtifactID:  "sha256:bad",
@@ -134,7 +134,7 @@ func TestHarness_TheTypedVariantIsBranchedOnNotDefendedAgainst(t *testing.T) {
 // topology fact rather than anything a station author waits on, lived here
 // through Draft 2 and was struck 2026-08-27 (DESIGN.md §6, issue #11).
 func TestHarness_BothConsumptionPatternsAreWitnessed(t *testing.T) {
-	out := koinetest.Run(station.DeploymentAuditor{},
+	out := koinetest.Run(&station.DeploymentAuditor{},
 		koinetest.Deliver(deployment.ResolvedDelivery{
 			Outcome:     koine.Failure,
 			ArtifactID:  "sha256:bad",
@@ -154,7 +154,7 @@ func TestHarness_BothConsumptionPatternsAreWitnessed(t *testing.T) {
 
 	// And the steward's inline reading is still its own thing, so the two
 	// roles are two and not one wearing two names.
-	inline := koinetest.Run(station.DeploymentSteward{},
+	inline := koinetest.Run(&station.DeploymentSteward{},
 		koinetest.Deliver(deployment.ResolvedDelivery{Outcome: koine.Failure, ArtifactID: "sha256:bad"}),
 		koinetest.Exchange("history.last", lastGood))
 	if inline.Consumption["history.last"] != manifest.Inline {
@@ -176,14 +176,14 @@ func TestHarness_AnUnscriptedExchangeIsLoud(t *testing.T) {
 			t.Fatalf("panic said %v", r)
 		}
 	}()
-	koinetest.Run(station.DeploymentSteward{},
+	koinetest.Run(&station.DeploymentSteward{},
 		koinetest.Deliver(deployment.ResolvedDelivery{Outcome: koine.Failure}))
 }
 
 // TestHarness_ARefusedYieldStopsResolution pins the Yield contract: false
 // means the host cancelled, and nothing after the refusal is spoken.
 func TestHarness_ARefusedYieldStopsResolution(t *testing.T) {
-	out := koinetest.Run(station.DeploymentAuditor{},
+	out := koinetest.Run(&station.DeploymentAuditor{},
 		koinetest.Deliver(deployment.ResolvedDelivery{Outcome: koine.Failure, ArtifactID: "sha256:bad"}),
 		koinetest.Exchange("history.last", lastGood),
 		koinetest.StopAfter(0))
@@ -202,5 +202,5 @@ func TestHarness_RunNeedsADelivery(t *testing.T) {
 			t.Fatal("Run resolved a station with no delivery")
 		}
 	}()
-	koinetest.Run(station.DeploymentSteward{})
+	koinetest.Run(&station.DeploymentSteward{})
 }

@@ -308,10 +308,24 @@ func DecodeAnswer(data []byte) (AnswerFrame, error) {
 	return f, err
 }
 
-// Breach reports whether the answer is the future having gone the other way.
-// A breach flag, or an error the host named, are the same fact said twice;
-// either is enough.
-func (f AnswerFrame) Breach() bool { return f.Breached || f.Error != "" }
+// Breach reports whether the answer is the expected future having gone the
+// other way: a finding about the WORK, and a valid response.
+//
+// It reads the flag and nothing else. Until conduit-go#200 the flag and a
+// named error were the same fact said twice, and this SDK read either as a
+// breach; #200 split them, and the engine's own tests now say so by name —
+// TestValuePollUnknownHandleIsNotABreach, TestValuePollDeadlineIsNotABreach.
+// An unknown handle (404), a deadline (504) and a closed broker (500) all
+// arrive with the flag CLEAR and a sentence in Error, because Conduit
+// stopping is not the tool breaching. Reading them as a breach would hand a
+// station a domain fact it never happened — which is the whole of the
+// 2026-08-28 ruling.
+func (f AnswerFrame) Breach() bool { return f.Breached }
+
+// Stoppage reports the other half of that split: the host said it could not
+// answer, and said so without claiming the tool breached. It is attributed
+// below the line, never to the body and never to the tool.
+func (f AnswerFrame) Stoppage() bool { return !f.Breached && f.Error != "" }
 
 // frame is what every frame in this package can do.
 type frame interface{ EncodeFields(*codec.Writer) }

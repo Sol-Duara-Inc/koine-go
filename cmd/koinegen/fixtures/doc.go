@@ -15,3 +15,6 @@ package fixtures
 //go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine DeploymentSteward -o ./manifests/deployment-steward.json
 //go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine DeploymentAuditor -o ./manifests/deployment-auditor.json
 //go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine DeploymentRehearsal -o ./manifests/deployment-rehearsal.json
+//go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine ChainVerbs -o ./manifests/chain-verbs.json
+//go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine ChainHooks -o ./manifests/chain-hooks.json
+//go:generate go run github.com/sol-duara-inc/koine-go/cmd/koinegen manifest -registry ../testdata/registry -station ./station -koine ChainWalker -o ./manifests/chain-walker.json

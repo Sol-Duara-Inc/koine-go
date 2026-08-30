@@ -55,6 +55,7 @@ jobs:
         run: |
           tinygo build -o /dev/null -target wasm-unknown ./fixtures/guest/steward
           tinygo build -o /dev/null -target wasm-unknown ./fixtures/guest/secondpath
+          tinygo build -o /dev/null -target wasm-unknown ./fixtures/guest/chain
 
       # Generation is a function of its inputs. Regenerating everything must
       # move nothing.
@@ -63,6 +64,7 @@ jobs:
           go generate ./cmd/koinegen/fixtures/
           go generate ./fixtures/guest/steward
           go generate ./fixtures/guest/secondpath
+          go generate ./fixtures/guest/chain
           git diff --exit-code
 
   # The gate whose absence let two halves of one wire ship against two

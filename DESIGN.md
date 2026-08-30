@@ -407,6 +407,51 @@ The two consumption patterns above map onto two of the engine's chain roles — 
 expected graph admits a third, stored role, minted from workflow topology and never from a
 station's `Resolve`, which is what makes the next section's manifest a topology, not a listing.
 
+### The pass-up — ratified 2026-08-30, built in K3
+
+How a controller hands its parent the event object as the walk happens. The law is
+conduit-go `docs/truth/frames/koine-station-model.md` §THE PASS-UP MECHANISM; the owner's
+requirement in his own words: *"sometimes the tribal knowledge will need to be executed before
+the parent, sometimes after, and frequently a bit of both. Pre- and post-hooks are pretty
+standard in MVCs, and this is where the M and C meet."*
+
+**The substrate is code position around an awaitable hand-off.** Three verbs, on `Base`:
+
+```go
+p := s.PassUp(offered)   // the parent has it from this line onward; never blocks
+got := s.Await(p)        // suspend until the parent's step concludes; the HOST waits
+s.Withhold(offered)      // the only suppression of the default pass
+```
+
+"A bit of both" is literally lines above and below the `PassUp` line. Features are **opt-out**:
+an author who writes none of the three still passes up, because the host does it at step end.
+A child trap is not an opt-out — *"a bug is not an opt-out"* — because the alternative makes
+every vendor feature fragile to every customer bug.
+
+**Named hooks are sugar over those three, never a second mechanism.** `Pre` mints what goes up;
+`Post` is told what came back. They are INTERFACES a station satisfies by declaring the method,
+not methods on `Base`, and that is forced rather than chosen: a `Pre` on `Base` is promoted to
+every station, so every station would satisfy it and the guest could no longer tell a station
+that wrote a hook from one that wrote nothing — which is exactly the distinction the zero-code
+default rests on. A sentinel flag does not rescue it either, because this document's own
+inheritance law says the parent runs by default and a shadowing `Pre` may call the embedded
+one. The sugar is `koine.RunHooks`, and there is exactly one copy of it: the sandbox and the
+harness call the same function, so the bench cannot disagree with the engine about what a hook
+means.
+
+**Awaiting IS declaring.** The law says a parent's outcome reaches the child as a value *"where
+declared"* and unwinds where not. This SDK reads `Await` itself as the declaration and invents
+no second surface to say the same thing twice — §6's branch control already compiles from
+usage, and a station that asked for its parent's outcome has said in code that it intends to
+handle it.
+
+**What is NOT settled.** The host half is conduit-go#210, which at the time of writing does not
+exist. The reserved type strings (`koine.passup`, `koine.withhold`), which frame field carries
+the offered object, what a concluded parent answers with, and how an unfilled parent is spelled
+are all PROPOSALS — gathered in `koine/wire/passup.go` under one heading so that agreeing them
+changes one file. K2 shipped two halves of one wire written against two readings of it; the
+lesson was not *read harder* but *do not call a proposal a conformance*.
+
 ## 7. Registration: the manifest, derived from code
 
 `koinegen manifest` extracts, per station, at build time: identity; awaits (selectors,

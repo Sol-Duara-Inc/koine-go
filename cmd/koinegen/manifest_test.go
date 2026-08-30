@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/sol-duara-inc/koine-go/koine/manifest"
+	"github.com/sol-duara-inc/koine-go/koine/wire"
 )
 
 func stationDir(t *testing.T) string {
@@ -511,5 +512,93 @@ func TestManifest_RefusesWhatItCannotReadWithCertainty(t *testing.T) {
 				t.Fatalf("the refusal did not name the station: %v", err)
 			}
 		})
+	}
+}
+
+// TestManifest_ThePassUpSurfaceIsDerivedFromTheBody is koine-go#5's sixth
+// done-condition: the manifest declares what the station's pass-up surface
+// uses, derived the same way everything else here is — from what the author
+// wrote, never from a declaration beside it.
+func TestManifest_ThePassUpSurfaceIsDerivedFromTheBody(t *testing.T) {
+	found := extractFixtures(t)
+
+	cases := map[string]struct {
+		verbs, hooks string
+		awaits       bool
+		declared     bool
+	}{
+		// The twins: one writes the verbs, one declares the hooks, and
+		// the manifest says which — because they are the same behaviour
+		// spelled two ways, and a declaration that hid the difference
+		// would be a declaration saying less than it knows.
+		"ChainVerbs": {verbs: "passUp,await", awaits: true, declared: true},
+		"ChainHooks": {hooks: "pre,post", awaits: true, declared: true},
+		// All three verbs, across two branches.
+		"ChainWalker": {verbs: "passUp,await,withhold", awaits: true, declared: true},
+		// Zero code: the step-end default pass is the host's duty, and a
+		// station that wrote nothing declares nothing.
+		"DeploymentSteward":   {},
+		"DeploymentAuditor":   {},
+		"DeploymentRehearsal": {},
+	}
+	for station, want := range cases {
+		t.Run(station, func(t *testing.T) {
+			got := found[station].Koine.PassUp
+			if got.Declared != want.declared {
+				t.Errorf("declared = %v, want %v", got.Declared, want.declared)
+			}
+			if strings.Join(got.Verbs, ",") != want.verbs {
+				t.Errorf("verbs = %v, want %q", got.Verbs, want.verbs)
+			}
+			if strings.Join(got.Hooks, ",") != want.hooks {
+				t.Errorf("hooks = %v, want %q", got.Hooks, want.hooks)
+			}
+			if got.Awaits != want.awaits {
+				t.Errorf("awaits = %v, want %v", got.Awaits, want.awaits)
+			}
+			// A station that declares nothing pins no wire spelling:
+			// the strings are only the business of a station that
+			// actually speaks them.
+			if want.declared && (got.Type == "" || got.WithholdType == "") {
+				t.Errorf("a declaring station must name the spellings it speaks: %#v", got)
+			}
+			if !want.declared && (got.Type != "" || got.WithholdType != "") {
+				t.Errorf("a silent station named a spelling: %#v", got)
+			}
+		})
+	}
+}
+
+// TestManifest_TheReservedSpellingsAreWrittenDownTwiceAndPinnedOnce keeps the
+// analyzer and the guest contract from drifting. cmd/koinegen cannot import
+// koine/wire — a build tool has no business depending on the guest contract —
+// so the two strings live in both places, and this is the pin that makes a
+// divergence a failing test.
+func TestManifest_TheReservedSpellingsAreWrittenDownTwiceAndPinnedOnce(t *testing.T) {
+	if wirePassUpType != wire.TypePassUp {
+		t.Errorf("koinegen says %q, koine/wire says %q", wirePassUpType, wire.TypePassUp)
+	}
+	if wireWithholdType != wire.TypeWithhold {
+		t.Errorf("koinegen says %q, koine/wire says %q", wireWithholdType, wire.TypeWithhold)
+	}
+}
+
+// TestManifest_PostWithoutPreIsRefusedByName pins the A9 posture on the hook
+// pair. A station that declared Post and not Pre asked what its parent
+// concluded about an object it never minted; koinegen refuses it rather than
+// letting it discover the gap in the sandbox.
+func TestManifest_PostWithoutPreIsRefusedByName(t *testing.T) {
+	body := probeHead + "\t_ = dep.ArtifactID\n" + probeTail + `
+func (p Probe) Post(u koine.Utterance, c koine.Conclusion) {}
+`
+	found, err := extractStation(t, body)
+	if err == nil {
+		t.Fatalf("a station declaring Post without Pre was derived: %#v", found["Probe"].Koine.PassUp)
+	}
+	if found != nil {
+		t.Fatal("a refusal stored manifests")
+	}
+	if !strings.Contains(err.Error(), "Post without Pre") {
+		t.Fatalf("the refusal did not name the pair: %v", err)
 	}
 }

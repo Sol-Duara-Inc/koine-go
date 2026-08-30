@@ -184,12 +184,23 @@ func TestWire_FramesRoundTripWithoutReflection(t *testing.T) {
 		if !back.Breach() || back.Error != "nothing good" || back.Status != 404 {
 			t.Fatalf("round trip lost keys: %#v", back)
 		}
-		// A named error without the flag is the same fact said once.
-		if !(wire.AnswerFrame{Error: "gone"}).Breach() {
-			t.Error("an answer that named an error is not filled")
+		// Since conduit-go#200 a named error WITHOUT the flag is not a
+		// breach: it is Conduit saying it could not answer, and the two
+		// are different sentences on the wire.
+		unflagged := wire.AnswerFrame{Status: 504, Error: "context deadline exceeded"}
+		if unflagged.Breach() {
+			t.Error("a deadline was read as the tool breaching")
 		}
-		if (wire.AnswerFrame{Status: 200}).Breach() {
-			t.Error("a plain answer is not a breach")
+		if !unflagged.Stoppage() {
+			t.Error("a named error without the flag is not a stoppage either — it is nothing")
+		}
+		flagged := wire.AnswerFrame{Status: 404, Error: "no such deployment", Breached: true}
+		if !flagged.Breach() || flagged.Stoppage() {
+			t.Error("a genuine breach must read as a breach and nothing else")
+		}
+		plain := wire.AnswerFrame{Status: 200}
+		if plain.Breach() || plain.Stoppage() {
+			t.Error("a plain answer is neither")
 		}
 	})
 }

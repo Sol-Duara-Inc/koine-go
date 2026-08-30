@@ -42,6 +42,7 @@ type body struct {
 	parents map[ast.Node]ast.Node
 	writes  map[string][]*ast.Ident
 
+	receiver      string // the station's own name for itself, if it named one
 	deliveryParam string // the koine.Delivery argument
 	yieldParam    string // the koine.Yield argument
 	deliveryIdent string // what the type assertion bound the delivery to
@@ -68,6 +69,9 @@ func (x *extractor) newBody(station string, fn *ast.FuncDecl, d *Delivery) (*bod
 		parents:    parentsOf(fn),
 		writes:     collectWrites(fn),
 		seatIdents: map[string]*Verb{},
+	}
+	if fn.Recv != nil && len(fn.Recv.List) == 1 && len(fn.Recv.List[0].Names) == 1 {
+		b.receiver = fn.Recv.List[0].Names[0].Name
 	}
 	if names := fn.Type.Params.List[0].Names; len(names) == 1 {
 		b.deliveryParam = names[0].Name
@@ -561,3 +565,89 @@ func stringLit(expr ast.Expr) (string, bool) {
 	}
 	return s, true
 }
+
+// The pass-up surface, read off the body the same way everything else here is
+// read: from what the author actually wrote, never from a declaration beside
+// it. koine-go#5's done-condition 6 asks the manifest to declare what the
+// station's pass-up surface uses so a host can refuse a mismatch at load.
+//
+// The three verbs are reached through the station's own receiver — s.PassUp,
+// s.Await, s.Withhold — because they live on the embedded Base. That is the
+// signature this looks for, and it is why a Resolve with no receiver name
+// can speak none of them.
+
+// passUpVerbs are the verb names as an author writes them, mapped to the
+// words the manifest uses.
+var passUpVerbs = map[string]string{
+	"PassUp":   "passUp",
+	"Await":    "await",
+	"Withhold": "withhold",
+}
+
+// passUpSurface reads the three verbs off the body and the two named hooks
+// off the station's method set.
+func (x *extractor) passUpSurface(station string, b *body) (manifest.PassUp, error) {
+	out := manifest.PassUp{Type: wirePassUpType, WithholdType: wireWithholdType}
+
+	spoken := map[string]bool{}
+	if b.receiver != "" {
+		ast.Inspect(b.fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if id, ok := sel.X.(*ast.Ident); !ok || id.Name != b.receiver {
+				return true
+			}
+			if word, isVerb := passUpVerbs[sel.Sel.Name]; isVerb {
+				spoken[word] = true
+			}
+			return true
+		})
+	}
+	for _, word := range []string{"passUp", "await", "withhold"} {
+		if spoken[word] {
+			out.Verbs = append(out.Verbs, word)
+		}
+	}
+
+	methods := x.methods[station]
+	hasPre, hasPost := methods["Pre"] != nil, methods["Post"] != nil
+	if hasPre {
+		out.Hooks = append(out.Hooks, "pre")
+	}
+	if hasPost {
+		out.Hooks = append(out.Hooks, "post")
+	}
+	// A station that declared Post and not Pre asked what its parent
+	// concluded about an object it never minted. koine.RunHooks refuses it
+	// at run time; refusing it here means the station never gets that far.
+	if hasPost && !hasPre {
+		return out, fmt.Errorf("koinegen manifest: %s declares Post without Pre — it asks what its parent concluded about an object it never mints, and nothing can mint one for it", station)
+	}
+
+	// Asking is declaring. A station that awaits — by writing the verb or
+	// by declaring Post, which awaits on its behalf — has said in code
+	// that a parent's finding arrives as a value it handles.
+	out.Awaits = spoken["await"] || hasPost
+	out.Declared = len(out.Verbs) > 0 || len(out.Hooks) > 0
+	if !out.Declared {
+		// Nothing to declare, and the spellings are nobody's business:
+		// a station that never passes up does not pin a wire type.
+		return manifest.PassUp{}, nil
+	}
+	return out, nil
+}
+
+// wirePassUpType and wireWithholdType mirror koine/wire's TypePassUp and
+// TypeWithhold. The registry and the analyzer cannot import koine/wire — a
+// build tool has no business depending on the guest contract — so the two
+// strings are written down in both places and pinned by a test.
+const (
+	wirePassUpType   = "koine.passup"
+	wireWithholdType = "koine.withhold"
+)

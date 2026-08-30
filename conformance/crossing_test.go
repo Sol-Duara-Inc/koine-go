@@ -631,3 +631,259 @@ func TestCrossing_AFulfillerThatAnswersWithNothingStoresNothing(t *testing.T) {
 		t.Errorf("an empty answer was stored as %s: %s", y.Type, y.Payload)
 	}
 }
+
+// The pass-up crossing (koine-go#5). WHAT THESE PROVE IS BOUNDED, AND THE
+// BOUND IS THE POINT: conduit-go#210's ChainBroker does not exist — there is
+// no ChainBroker, no pass-up store and no reserved type anywhere in the
+// engine — so nothing here can prove conformance. There is nothing to
+// conform to yet.
+//
+// What they DO prove: a guest speaking the whole pass-up surface loads into
+// the real loader, its derived manifest reads, and the frames it speaks are
+// well formed enough that the merged broker answers them. When #210 lands,
+// these tests are where the two halves meet, and the spellings in
+// koine/wire/passup.go are what will have to agree.
+
+// TestCrossing_TheChainGuestLoadsIntoTheRealHost is koine-go#5's first
+// done-condition: a fixture guest exercising all three verbs, built with the
+// pinned toolchain, admitted by the merged loader.
+func TestCrossing_TheChainGuestLoadsIntoTheRealHost(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
+	if err != nil {
+		t.Fatalf("the loader refused the chain guest: %v", err)
+	}
+	defer station.Close(context.Background())
+
+	m := station.Manifest()
+	if m == nil {
+		t.Fatal("the loader read no manifest")
+	}
+	if m.Identity.Name != "chain-walker" {
+		t.Errorf("identity.name = %q", m.Identity.Name)
+	}
+}
+
+// TestCrossing_APassUpReachesTheBrokerAsAWellFormedExchange drives the whole
+// surface through the merged MemoryBroker. The broker knows nothing about
+// pass-ups — that is #210's job — so what is asserted is the shape of what
+// arrives and that the guest can read what comes back.
+func TestCrossing_APassUpReachesTheBrokerAsAWellFormedExchange(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer station.Close(context.Background())
+
+	var mu sync.Mutex
+	var seen []koinehost.ExchangeRequest
+	broker := koinehost.NewMemoryBroker()
+	broker.RegisterHandler(wire.TypePassUp, func(req koinehost.ExchangeRequest) koinehost.ExchangeResponse {
+		mu.Lock()
+		seen = append(seen, req)
+		mu.Unlock()
+		// A parent that enriched and stored concludes with no payload.
+		// For a pass-up that is the ORDINARY case, and the guest must
+		// not read it as a stoppage.
+		return koinehost.ExchangeResponse{Status: 200}
+	})
+
+	emitter := koinehost.NewRecordingEmitter()
+	res, err := station.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  emitter,
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "run-passup-1",
+			ChainID:   "chain-passup-1",
+			Event: json.RawMessage(`{"outcome":"failure","artifactId":"sha256:bad",` +
+				`"environment":"prod"}`),
+		},
+	})
+	if err != nil || res.Status != 0 {
+		t.Fatalf("run = %d, %v (logs %v)", res.Status, err, res.Logs)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("the broker saw %d pass-ups, want one: %#v", len(seen), seen)
+	}
+	req := seen[0]
+	if req.Type != wire.TypePassUp {
+		t.Errorf("the pass-up rode type %q", req.Type)
+	}
+
+	// The offered object rides Intent, as the domain object itself with its
+	// type key spliced flat — the yield convention, because the host
+	// already reads a yield's type that way. Both facts are PROPOSALS
+	// until #210 says otherwise; this asserts what this build sends.
+	if len(req.Intent) == 0 {
+		t.Fatal("the pass-up carried no object")
+	}
+	var offered map[string]any
+	if err := json.Unmarshal(req.Intent, &offered); err != nil {
+		t.Fatalf("the offered object is not readable: %v", err)
+	}
+	if offered["type"] != "dev.cdevents.deployment.recorded" {
+		t.Errorf("the offered object named its type %v", offered["type"])
+	}
+	if offered["artifact"] != "sha256:bad" {
+		t.Errorf("the offered object carried %v", offered["artifact"])
+	}
+	if _, wrapped := offered["payload"]; wrapped {
+		t.Errorf("the offered object is wrapped: %s", req.Intent)
+	}
+
+	// The child kept working while the parent had it, and its own speech
+	// was stored.
+	if len(res.Yields) == 0 {
+		t.Fatal("the child stored nothing of its own")
+	}
+}
+
+// TestCrossing_AWithholdReachesTheBrokerAsItsOwnType pins the other branch.
+// The default pass is the HOST's, so a guest that said nothing could not
+// suppress it — which is why a withhold has to be spoken at all.
+func TestCrossing_AWithholdReachesTheBrokerAsItsOwnType(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer station.Close(context.Background())
+
+	var mu sync.Mutex
+	var kinds []string
+	broker := koinehost.NewMemoryBroker()
+	for _, kind := range []string{wire.TypePassUp, wire.TypeWithhold} {
+		k := kind
+		broker.RegisterHandler(k, func(koinehost.ExchangeRequest) koinehost.ExchangeResponse {
+			mu.Lock()
+			kinds = append(kinds, k)
+			mu.Unlock()
+			return koinehost.ExchangeResponse{Status: 200}
+		})
+	}
+
+	res, err := station.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  koinehost.NewRecordingEmitter(),
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "run-passup-2",
+			ChainID:   "chain-passup-2",
+			Event:     json.RawMessage(`{"outcome":"success","artifactId":"sha256:fine"}`),
+		},
+	})
+	if err != nil || res.Status != 0 {
+		t.Fatalf("run = %d, %v (logs %v)", res.Status, err, res.Logs)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(kinds, ",") != wire.TypeWithhold {
+		t.Fatalf("the success branch spoke %v, want exactly one withhold", kinds)
+	}
+}
+
+// TestCrossing_AParentBreachArrivesAsAValue pins koine-go#5's fifth
+// done-condition across the real boundary. Since conduit-go#200 the engine
+// distinguishes a genuine breach from Conduit being unable to answer, and the
+// child must see the first as a finding it can branch on.
+func TestCrossing_AParentBreachArrivesAsAValue(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer station.Close(context.Background())
+
+	broker := koinehost.NewMemoryBroker()
+	broker.RegisterHandler(wire.TypePassUp, func(koinehost.ExchangeRequest) koinehost.ExchangeResponse {
+		return koinehost.ExchangeResponse{
+			Status:   424,
+			Error:    "the parent's tool would not answer",
+			Breached: true, // the one legitimate use of the flag
+		}
+	})
+
+	emitter := koinehost.NewRecordingEmitter()
+	res, err := station.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  emitter,
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "run-passup-3",
+			ChainID:   "chain-passup-3",
+			Event: json.RawMessage(`{"outcome":"failure","artifactId":"sha256:bad",` +
+				`"environment":"prod"}`),
+		},
+	})
+	// No panic, no unwind, no fault: the finding is a VALUE the body
+	// branched on, and the run concluded normally.
+	if err != nil || res.Status != 0 {
+		t.Fatalf("a parent's breach did not arrive as a value: run = %d, %v (logs %v)",
+			res.Status, err, res.Logs)
+	}
+	var spokeDeploy bool
+	for _, y := range res.Yields {
+		if y.Type == "dev.cdevents.deployment.requested" {
+			spokeDeploy = true
+		}
+	}
+	if !spokeDeploy {
+		t.Fatalf("the body did not take its finding branch: %#v", res.Yields)
+	}
+}
+
+// TestCrossing_ThePassUpSpellingsAreDeclaredInOnePlace guards the thing K2
+// taught. The reserved type strings exist in NEITHER repository's code — they
+// are a ticket agreement between koine-go#5 and conduit-go#210 and nothing
+// more. Pinning them here means the day conduit-go declares its own constant,
+// a disagreement is a failing test rather than a silent misroute.
+func TestCrossing_ThePassUpSpellingsAreDeclaredInOnePlace(t *testing.T) {
+	if wire.TypePassUp != "koine.passup" {
+		t.Errorf("the pass-up type is %q; both tickets name koine.passup", wire.TypePassUp)
+	}
+	if wire.TypeWithhold != "koine.withhold" {
+		t.Errorf("the withhold type is %q", wire.TypeWithhold)
+	}
+	// And the manifest says them out loud, so a host can refuse a mismatch
+	// at load rather than misrouting at run time.
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "fixtures", "guest", "chain", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Koine struct {
+			PassUp struct {
+				Declared     bool     `json:"declared"`
+				Verbs        []string `json:"verbs"`
+				Awaits       bool     `json:"awaits"`
+				Type         string   `json:"type"`
+				WithholdType string   `json:"withholdType"`
+			} `json:"passUp"`
+		} `json:"koine"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	p := m.Koine.PassUp
+	if !p.Declared || !p.Awaits {
+		t.Errorf("the manifest does not declare the surface: %#v", p)
+	}
+	if strings.Join(p.Verbs, ",") != "passUp,await,withhold" {
+		t.Errorf("the manifest declares verbs %v", p.Verbs)
+	}
+	if p.Type != wire.TypePassUp || p.WithholdType != wire.TypeWithhold {
+		t.Errorf("the manifest and the wire disagree about the spellings: %#v", p)
+	}
+}

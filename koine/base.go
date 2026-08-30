@@ -9,6 +9,7 @@ type hostContext struct {
 	chain   ChainRef
 	actor   ActorRef
 	project ProjectContext
+	lineage Lineage
 }
 
 // Base carries the standard parts every station stands on. Embed it through

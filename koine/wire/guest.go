@@ -171,7 +171,11 @@ func (g *Guest) Deliver(frame []byte) Outcome {
 	// the line and handed up; a station observes them and never invents
 	// one. ProjectContext stays nil: its content is deliberately unruled
 	// (§4), and this package surfaces that rather than inventing a shape.
-	if !koine.Construct(g.station.Koine, koine.ChainRef(f.ChainID), koine.ActorRef(f.Actor), nil) {
+	if !koine.Construct(g.station.Koine, koine.Standing{
+		Chain:   koine.ChainRef(f.ChainID),
+		Actor:   koine.ActorRef(f.Actor),
+		Lineage: lineage{g: g},
+	}) {
 		return g.refuse("this guest serves something that embeds no stratum base, which is not a station")
 	}
 
@@ -197,6 +201,16 @@ func (g *Guest) Deliver(frame []byte) Outcome {
 		}
 		return true
 	})
+
+	// The named hooks, run as SUGAR over the three verbs and never as a
+	// second mechanism. The sequence is koine.RunHooks — one
+	// implementation, shared with the harness, so the bench and the
+	// sandbox cannot drift apart about what a hook means.
+	if g.fault == "" {
+		if err := koine.RunHooks(g.station.Koine, delivered, lineage{g: g}); err != nil {
+			g.faultBelowTheLine(err.Error())
+		}
+	}
 
 	switch {
 	case g.fault != "":
@@ -272,13 +286,14 @@ func (s *Stopped) Error() string { return FaultPrefix + s.Why }
 // is a programming technique… it is the intent that determines this" — not
 // because anything under the station failed.
 //
-// One honest limit of wire v1, and it is the same one koine.Answer records:
-// koinehost.ExchangeResponse carries a deadline and an unknown handle
-// through the SAME breached field as a real domain breach, so a Variant can
-// reach a body describing something that was never a fact about its domain.
-// Splitting them is wire v2 and moves both sides together, and the named
-// carrier for a tool breach is being defined in conduit-go#200 — which this
-// SDK will follow rather than anticipate.
+// conduit-go#200 has since landed and split the two: a breach sets the
+// flag, and Conduit being unable to answer sets an error with the flag
+// clear. The engine's own tests say so by name —
+// TestValuePollUnknownHandleIsNotABreach, TestValuePollDeadlineIsNotABreach.
+// So a Variant now means what it says, and everything that is not a finding
+// about the work arrives as *Stopped instead. The named carrier for a tool
+// breach on the engine side is koine.ErrToolBreach; this SDK follows that
+// definition rather than minting a rival one.
 type Variant struct {
 	Name   string
 	Status int
@@ -371,6 +386,12 @@ func (b broker) Await(t koine.Token) koine.Answer {
 	// A breach is a valid response. The tool stopped; the fabric said so.
 	if answer.Breach() {
 		return koine.Answer{By: AckBroker, Err: &Variant{Name: answer.Error, Status: answer.Status}}
+	}
+	// The host said it could not answer, and did NOT claim a breach. Since
+	// conduit-go#200 those are different sentences on the wire, so they are
+	// different sentences here: this one is attributed below the line.
+	if answer.Stoppage() {
+		return b.stopped("the host answered status " + strconv.Itoa(answer.Status) + ": " + answer.Error)
 	}
 	// Filled, with nothing in it. Handing the body a zero value here is
 	// how a fulfiller's silence became a stored event naming a deployment
