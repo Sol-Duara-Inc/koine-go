@@ -288,6 +288,12 @@ func TestGenerate_RegistryRefusesByName(t *testing.T) {
 			wantIn: "the pass-up reserves",
 		},
 		{
+			name:   "a stratum intent cannot claim the reserved withhold type either",
+			file:   "io.reservedwh.json",
+			body:   `{"namespace":"io.reservedwh","package":"reservedwh","stratum":"floor","doc":"x","types":[{"name":"T","event":"e","doc":"x","fields":[{"name":"F","json":"f","type":"string"}]}],"deliveries":[{"name":"TDelivery","of":"T","doc":"x","await":{"mode":"event","type":"e"},"verbs":[{"name":"Seat","seat":"s","doc":"x","intents":[{"name":"Ask","exchange":"koine.withhold","returns":"T","doc":"x"}]}]}]}`,
+			wantIn: "the pass-up reserves",
+		},
+		{
 			name:   "a delivery cannot collide with a type name",
 			file:   "io.collideident.json",
 			body:   `{"namespace":"io.collideident","package":"collideident","stratum":"floor","doc":"x","refs":[{"name":"R","doc":"x"}],"types":[{"name":"Deploy","event":"e","doc":"x","fields":[{"name":"F","json":"f","type":"string"}]}],"deliveries":[{"name":"DeployDelivery","of":"Deploy","doc":"x","await":{"mode":"event","type":"e"}}]}`,

@@ -303,8 +303,16 @@ func (r *run) Withhold(u koine.Utterance) {
 	r.passages = append(r.passages, &Passage{Offered: u, Withheld: true})
 }
 
-// AwaitPass answers what the test said the parent concludes.
+// AwaitPass answers what the test said the parent concludes — except for a
+// suppressed passage, where the answer is single-sourced beside the gate
+// (koine.Passing.AwaitedConclusion) so the bench and the sandbox cannot
+// drift about what awaiting a withheld pass means.
 func (r *run) AwaitPass(p koine.Passage) koine.Conclusion {
+	if p == 0 {
+		if c, ok := r.passing.AwaitedConclusion(); ok {
+			return c
+		}
+	}
 	if p >= 1 && int(p) <= len(r.passages) {
 		r.passages[p-1].Awaited = true
 	}

@@ -142,11 +142,8 @@ func (l lineage) AwaitPass(p koine.Passage) koine.Conclusion {
 		// Either the pass was suppressed — awaiting a withheld pass is
 		// asking what a parent concluded about something it never
 		// received — or the host would not open one.
-		if l.g.passing.Withheld() {
-			return koine.Conclusion{
-				Outcome: koine.Success,
-				Err:     &Stopped{Why: "this station awaited a pass it had withheld; the parent was never given anything to conclude about"},
-			}
+		if c, ok := l.g.passing.AwaitedConclusion(); ok {
+			return c // the one answer, single-sourced beside the gate itself
 		}
 		return koine.Conclusion{
 			Outcome: koine.Failure,
@@ -193,7 +190,10 @@ func (l lineage) AwaitPass(p koine.Passage) koine.Conclusion {
 }
 
 // isUnfilled recognises the unfilled-seat answer. See UnfilledPrefix: this is
-// a placeholder for a spelling the host has not assigned.
+// isUnfilled recognises the engine's own ErrNotImplemented text (see
+// UnfilledPrefix — the settled sentinel, pinned with #210's 501 shape),
+// matched as a prefix because the host's sentence names the namespace after
+// it.
 func isUnfilled(msg string) bool {
 	return len(msg) >= len(UnfilledPrefix) && msg[:len(UnfilledPrefix)] == UnfilledPrefix
 }

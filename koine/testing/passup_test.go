@@ -247,3 +247,44 @@ func (s *doublePasser) Resolve(d koine.Delivery, yield koine.Yield) {
 	s.PassUp(deployment.Deploy{Artifact: dep.ArtifactID, Target: dep.Environment})
 	yield(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
 }
+
+// awaitsItsOwnWithhold is a local station for one drift pin: it withholds,
+// then awaits the passage it suppressed, and records what came back.
+type awaitsItsOwnWithhold struct {
+	koine.ObserverBase
+	got koine.Conclusion
+}
+
+func (awaitsItsOwnWithhold) Identity() koine.Identity {
+	return koine.Identity{Group: "payment-engineering", Author: "mchen", Name: "awaits-own-withhold"}
+}
+func (awaitsItsOwnWithhold) Awaits() []selector.Selector { return selector.List(deployment.Resolved()) }
+func (awaitsItsOwnWithhold) Complete() koine.Contract    { return koine.DefaultAllAwaited }
+func (s *awaitsItsOwnWithhold) Resolve(d koine.Delivery, yield koine.Yield) {
+	dep := d.(deployment.ResolvedDelivery)
+	s.Withhold(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
+	s.got = s.Await(0)
+	yield(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
+}
+
+// The bench answers a withheld await from the SAME single source as the
+// sandbox (koine.Passing.AwaitedConclusion) — the drift this pins was real:
+// the wire answered Success plus the shared finding while the bench answered
+// the parent's scripted conclusion for a pass that never left.
+func TestHarness_AwaitOfAWithheldPassIsTheSharedAnswer(t *testing.T) {
+	st := &awaitsItsOwnWithhold{}
+	// Script a parent conclusion deliberately DIFFERENT from the shared
+	// answer: before the fix, this is exactly what leaked through.
+	out := koinetest.Run(st, koinetest.Deliver(failed()),
+		koinetest.Parent(koine.Conclusion{Outcome: koine.Failure, Err: errors.New("the parent's real answer, which a withheld pass must never receive")}))
+
+	if st.got.Outcome != koine.Success {
+		t.Errorf("outcome = %q, want Success — awaiting a withheld pass is the author's own act, not a failure", st.got.Outcome)
+	}
+	if !errors.Is(st.got.Err, koine.ErrAwaitedWithheld) {
+		t.Errorf("err = %v, want koine.ErrAwaitedWithheld — the one answer both hosts give", st.got.Err)
+	}
+	if n := len(out.Passages); n != 1 || !out.Passages[0].Withheld {
+		t.Fatalf("the run must record exactly the withhold; got %d passages", n)
+	}
+}

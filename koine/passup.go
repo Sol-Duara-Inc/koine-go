@@ -262,6 +262,22 @@ type Passing struct {
 // drives a station calls this before each.
 func (p *Passing) Reset() { *p = Passing{} }
 
+// ErrAwaitedWithheld is the one answer every host gives a station that awaits
+// a pass it had withheld: the parent was never given anything to conclude
+// about. A value, not a fault — the author's own suppression, reported back
+// in the author's own terms. Branch on it with errors.Is.
+var ErrAwaitedWithheld = errors.New("koine: this station awaited a pass it had withheld; the parent was never given anything to conclude about")
+
+// AwaitedConclusion is the single source both hosts consult when Await meets
+// a suppressed passage. It answers ok=false when nothing was withheld, so a
+// host falls through to its own real answer.
+func (p *Passing) AwaitedConclusion() (Conclusion, bool) {
+	if !p.withheld {
+		return Conclusion{}, false
+	}
+	return Conclusion{Outcome: Success, Err: ErrAwaitedWithheld}, true
+}
+
 // Passed reports whether a passage has left.
 func (p *Passing) Passed() bool { return p.passed }
 

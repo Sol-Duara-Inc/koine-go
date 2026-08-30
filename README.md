@@ -11,7 +11,8 @@ more than [DESIGN.md](DESIGN.md) §1 and §4 do — §4 gives `Chain()` and `Act
 stratum, read-only. The design was right; the summary was not.)
 
 **Status:** K0 (the contracts), K1 (codegen, the manifest, the harness), K2's SDK half
-(the versioned wire contract and the guest fixtures) have landed.
+(the versioned wire contract and the guest fixtures), and K3 (the pass-up surface —
+PassUp/Await/Withhold, the named hooks, the one-passage gate) have landed.
 [DESIGN.md](DESIGN.md) is the whole document — the transcribed semantics, the contract types,
 the amendments from the engine build, the open-decision ledger, and the build phases that
 become this repository's issues.
