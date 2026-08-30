@@ -137,6 +137,10 @@ type run struct {
 	utterances []koine.Utterance
 	spoken     []*Spoken
 	passages   []*Passage
+	// passing is koine's one-passage gate, the same one the sandbox
+	// enforces. The bench holds stations to the rule the engine holds
+	// them to, or it is not the semantics minus the transport.
+	passing koine.Passing
 }
 
 // Passage is one hand-off to the parent as the run saw it: what went up, or
@@ -193,6 +197,8 @@ func Run(k koine.Koine, opts ...Option) Out {
 	// would be a harness that could disagree with the engine about what a
 	// hook does, which is the one thing it must never do.
 	if err := koine.RunHooks(k, d, r); err != nil {
+		// The author's own shape mistake, said the way the sandbox says
+		// it: a station that declared Post without Pre cannot run.
 		panic("koinetest: " + err.Error())
 	}
 
@@ -282,12 +288,18 @@ func (r *run) scriptedNames() []string {
 // Lineage this SDK ships beside the wire's, and like the wire's it invents no
 // answer: what the parent concludes is what the test said it concludes.
 func (r *run) PassUp(u koine.Utterance) koine.Passage {
+	if !r.passing.Offer() {
+		return 0 // withheld; the pass is what suppression suppresses
+	}
 	r.passages = append(r.passages, &Passage{Offered: u})
 	return koine.Passage(len(r.passages)) // one-based; zero is no passage at all
 }
 
 // Withhold records the suppression. Nothing goes up.
 func (r *run) Withhold(u koine.Utterance) {
+	if !r.passing.Suppress() {
+		return
+	}
 	r.passages = append(r.passages, &Passage{Offered: u, Withheld: true})
 }
 

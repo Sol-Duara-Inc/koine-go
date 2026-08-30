@@ -12,7 +12,8 @@
   ],
   "complete": "all-awaited",
   "emits": [
-    "dev.cdevents.deployment.requested"
+    "dev.cdevents.deployment.requested",
+    "dev.cdevents.deployment.recorded"
   ],
   "koine": {
     "stratum": "observer",
@@ -22,6 +23,13 @@
     "events": [
       {
         "type": "dev.cdevents.deployment.requested",
+        "direction": "emit",
+        "reconciliation": {
+          "declared": false
+        }
+      },
+      {
+        "type": "dev.cdevents.deployment.recorded",
         "direction": "emit",
         "reconciliation": {
           "declared": false
@@ -40,6 +48,11 @@
       {
         "go": "deployment.Deploy",
         "type": "dev.cdevents.deployment.requested",
+        "namespace": "dev.cdevents.deployment"
+      },
+      {
+        "go": "deployment.DeploymentRecorded",
+        "type": "dev.cdevents.deployment.recorded",
         "namespace": "dev.cdevents.deployment"
       }
     ],

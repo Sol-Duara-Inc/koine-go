@@ -419,6 +419,14 @@ func (ns *Namespace) judgeDeliveries() error {
 					return fmt.Errorf("koinegen: %s: intent %q must be an exported Go identifier", ns.file, in.Name)
 				case in.Exchange == "":
 					return fmt.Errorf("koinegen: %s: intent %s.%s names no exchange", ns.file, v.Name, in.Name)
+				case in.Exchange == wirePassUpType || in.Exchange == wireWithholdType:
+					// The pass-up reserves these two type strings on
+					// the same field a stratum's intents route on. A
+					// stratum that claimed one would have its intent
+					// delivered to the parent chain instead of its
+					// seat — a correctness collision, not a stranger
+					// to guard against.
+					return fmt.Errorf("koinegen: %s: intent %s.%s claims %q, which the pass-up reserves — a stratum intent spelled that way would route to the parent chain instead of its seat", ns.file, v.Name, in.Name, in.Exchange)
 				}
 				in.returns = ns.TypeNamed(in.Returns)
 				if in.returns == nil {

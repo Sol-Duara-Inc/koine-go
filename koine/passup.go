@@ -120,13 +120,17 @@ func (b *Base) Withhold(u Utterance) {
 	b.lineage("Withhold").Withhold(u)
 }
 
-// lineage answers the seam, or refuses loudly. A nil seam means the station
-// was never constructed — a wiring fault in whoever built it, not a runtime
-// condition a body could branch on — so this is the same posture the
-// generated verbs take for an unbound delivery: say so, once, by name.
+// lineage answers the seam, or refuses loudly.
+//
+// A nil seam is a SHAPE mistake, not a host that could not answer, and it
+// traps so the record names the right party: whoever built this station
+// never constructed it, and a station that was never constructed has no
+// parent chain to reach. The two-outcomes rule cuts both ways — a stoppage
+// below the line must not be blamed on the author, and the author's own
+// shape mistake must not be dressed up as one.
 func (b *Base) lineage(verb string) Lineage {
 	if b.ctx.lineage == nil {
-		panic("koine: " + verb + " spoke with no parent chain below this station — a station reaches its lineage through construction, and this one was never constructed")
+		panic("koine: " + verb + " reached for a parent chain on a station nobody constructed — this is a shape mistake in whoever built it, not a host that could not answer")
 	}
 	return b.ctx.lineage
 }
@@ -170,6 +174,11 @@ type PostHook interface {
 
 // ErrPostWithoutPre is a station that declared Post and not Pre: it asked
 // what its parent concluded about an object it never minted.
+//
+// It is the AUTHOR's shape mistake — a program that cannot be run, not a host
+// that could not answer — so whoever drives a station turns it into a trap
+// rather than a stoppage below the line. koinegen refuses the same shape at
+// generation, so in practice it never gets that far.
 var ErrPostWithoutPre = errors.New("koine: this station declares Post without Pre — it asked what its parent concluded about an object it never minted, and nothing can mint one for it")
 
 // RunHooks runs the named hooks as SUGAR over the three verbs, and is the
@@ -212,4 +221,78 @@ func RunHooks(k Koine, d Delivery, l Lineage) error {
 		post.Post(offered, l.AwaitPass(passage))
 	}
 	return nil
+}
+
+// Passing is the one-passage-per-delivery gate, and it is the whole of that
+// rule in one place.
+//
+// The law admits ONE passage per delivery and makes Withhold the only
+// suppression. Neither holds if the two ways of reaching the parent — the
+// verbs in a body and the hooks around it — can both fire: a station that
+// declares Pre and also calls PassUp would pass twice, and a body that
+// Withheld would find the hook passing anyway, which is the only gate failing
+// to gate.
+//
+// Ruled by the delegate 2026-08-30, overrulable in a word: FIRST WRITER WINS,
+// AND WITHHOLD BEATS EVERYTHING NOT YET SAID.
+//
+//   - Withhold, then a pass — the pass is a NO-OP. Suppression is what the
+//     author asked for, and the hook's pass is the thing being suppressed.
+//   - A pass, then another pass — REFUSED BY NAME. Pre may have transformed
+//     the object, so two passes can carry two different payloads: that is a
+//     conflict, not an idempotent repeat, and guessing which the author meant
+//     is exactly what this repository refuses to do.
+//   - A pass, then a Withhold — REFUSED BY NAME. You cannot unsay what has
+//     already been said; the parent has it.
+//
+// The two refusals TRAP, and they are attributed to the author, because they
+// are: a body that passes twice or withholds after passing is a program that
+// cannot be run, not a host that could not answer. koinehost records a trap
+// as "trap in resolve", which names the right party.
+//
+// It lives here, beside Construct and RunHooks, because there are two hosts —
+// the sandbox and the bench — and a second copy of a state machine is a
+// second thing to drift.
+type Passing struct {
+	passed   bool
+	withheld bool
+}
+
+// Reset returns the gate to its start. One delivery, one passage: whoever
+// drives a station calls this before each.
+func (p *Passing) Reset() { *p = Passing{} }
+
+// Passed reports whether a passage has left.
+func (p *Passing) Passed() bool { return p.passed }
+
+// Withheld reports whether the pass was suppressed.
+func (p *Passing) Withheld() bool { return p.withheld }
+
+// Offer judges whether a pass-up may leave, and answers false when it may
+// not. A refusal that is the author's shape mistake traps rather than
+// returning, because there is no correct way to carry on from it.
+func (p *Passing) Offer() bool {
+	switch {
+	case p.withheld:
+		// The author suppressed the pass. A hook's pass is precisely
+		// what suppression suppresses, so this is not an error — it is
+		// the gate doing its job.
+		return false
+	case p.passed:
+		panic("koine: this station passed up twice in one delivery — the law admits one passage per delivery, and two passes can carry two different payloads, so there is no version of this that is merely a repeat")
+	}
+	p.passed = true
+	return true
+}
+
+// Suppress judges whether a withhold may stand.
+func (p *Passing) Suppress() bool {
+	switch {
+	case p.passed:
+		panic("koine: this station withheld after it had already passed up — the parent has the object, and nothing here can unsay what was said")
+	case p.withheld:
+		return false // already suppressed; nothing further to do
+	}
+	p.withheld = true
+	return true
 }

@@ -24,18 +24,24 @@ import (
 // still open:
 //
 //  1. TYPE STRING — "koine.passup". BOTH tickets name this string, and #210
-//     calls it "the reserved type agreed with koine-go #5". Agreed on paper,
-//     asserted nowhere in conduit-go's code. TypePassUp below is the one
-//     place this SDK spells it.
+//     is being updated to adopt these spellings as its own done-conditions,
+//     so "as agreed with the host ticket" becomes real rather than
+//     aspirational. Asserted in conduit-go's code not yet. TypePassUp below
+//     is the one place this SDK spells it — with a mirror in cmd/koinegen,
+//     which cannot import this package, pinned to it by a test.
 //  2. THE CARRIER — the offered object rides ExchangeRequest.Intent, the only
 //     field of that shape. OPEN: #210 does not say which field. Worse, the
 //     law says the door already minted one object per lineage layer and
 //     "nothing is re-spoken, nothing re-verified", which reads as the host
 //     already HOLDING the parent's object — in which case the guest need ship
-//     no bytes at all. But koine-go#5 specifies PassUp(e) taking an object and
-//     Pre "may transform" it, and a transform nobody receives is not a
-//     transform. Those cannot both be true. This SDK follows its own ticket
-//     and ships the object; the contradiction is surfaced on both issues.
+//     no bytes at all. RESOLVED by the owner 2026-08-30: both texts are true
+//     on DIFFERENT PATHS. An explicit pass — the verbs, or a Pre transform —
+//     ships the object here, because the transform is the point. The
+//     zero-code default pass is the HOST's, served from the object the door
+//     already minted, with no guest bytes at all. "Nothing is re-spoken"
+//     governs the default; "Pre may transform" governs the explicit. This
+//     SDK implements exactly that: a station that writes nothing emits
+//     nothing, and every byte below belongs to a station that wrote something.
 //  3. THE OBJECT'S SHAPE — the domain object with its type key spliced flat,
 //     exactly as YieldFrame does it, because the host reads a yield's type the
 //     same way and one convention beats two. OPEN, same as (2).
@@ -51,9 +57,9 @@ import (
 //     and for a PASS-UP that is the ordinary case, not a stoppage — see
 //     awaitPass. OPEN: #210 says only "answers the parent's outcome".
 //  6. THE UNFILLED PARENT — a namespace declared and not loaded answers
-//     determinately, in the ErrNotImplemented family. OPEN: no status code or
-//     error text is assigned anywhere. Recognised below by prefix, which is a
-//     placeholder and says so.
+//     determinately, in the ErrNotImplemented family. conduit-go#210 now
+//     pins Status 501, an Error beginning with koine.ErrNotImplemented's own
+//     text, and Breached false. Recognised below by that exact prefix.
 
 // TypePassUp is the reserved exchange type a pass-up rides. Both tickets name
 // this string; nothing in conduit-go asserts it yet. The conformance module
@@ -65,10 +71,14 @@ const TypePassUp = "koine.passup"
 // — see item 4 above.
 const TypeWithhold = "koine.withhold"
 
-// UnfilledPrefix is how an unfilled parent is recognised until the host
-// assigns the answer a spelling. It is a placeholder, and naming it here
-// rather than matching a string inline is what makes it one line to correct.
-const UnfilledPrefix = "koine: not implemented"
+// UnfilledPrefix is how an unfilled parent is recognised: the exact text of
+// the engine's own koine.ErrNotImplemented (conduit-go pkg/koine/resolve.go).
+// conduit-go#210 pins that the host answers a declared-but-not-loaded parent
+// with Status 501, an Error beginning with this text, and Breached false.
+//
+// It is matched by prefix rather than compared whole because the host's
+// sentence names the namespace after it, which is the part a person needs.
+const UnfilledPrefix = "koine: function not implemented"
 
 // Unfilled is a parent namespace that a workflow declared and no controller
 // filled. It is determinate and it is NOT a stoppage below the line: nothing
@@ -92,6 +102,12 @@ func (l lineage) PassUp(u koine.Utterance) koine.Passage {
 	if l.g.fault != "" {
 		return 0
 	}
+	// One passage per delivery, and Withhold beats anything not yet said.
+	// A suppressed pass is a no-op; a second pass traps, because two
+	// passes can carry two different payloads.
+	if !l.g.passing.Offer() {
+		return 0
+	}
 	handle := l.g.host.Exchange(l.offer(TypePassUp, u))
 	if handle == 0 {
 		l.g.faultBelowTheLine("the host would not take a pass-up to this station's parent")
@@ -107,6 +123,11 @@ func (l lineage) Withhold(u koine.Utterance) {
 	if l.g.fault != "" {
 		return
 	}
+	// Withholding after the parent already has it traps: nothing here can
+	// unsay what was said.
+	if !l.g.passing.Suppress() {
+		return
+	}
 	if handle := l.g.host.Exchange(l.offer(TypeWithhold, u)); handle == 0 {
 		l.g.faultBelowTheLine("the host would not take a withhold from this station")
 	}
@@ -118,6 +139,15 @@ func (l lineage) AwaitPass(p koine.Passage) koine.Conclusion {
 		return koine.Conclusion{Outcome: koine.Failure, Err: &Stopped{Why: l.g.fault}}
 	}
 	if p == 0 {
+		// Either the pass was suppressed — awaiting a withheld pass is
+		// asking what a parent concluded about something it never
+		// received — or the host would not open one.
+		if l.g.passing.Withheld() {
+			return koine.Conclusion{
+				Outcome: koine.Success,
+				Err:     &Stopped{Why: "this station awaited a pass it had withheld; the parent was never given anything to conclude about"},
+			}
+		}
 		return koine.Conclusion{
 			Outcome: koine.Failure,
 			Err:     &Stopped{Why: "this station awaited a passage the host never opened"},

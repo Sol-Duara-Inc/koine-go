@@ -10,7 +10,7 @@ an envelope. (An earlier wording here named the nouns rather than the verbs, and
 more than [DESIGN.md](DESIGN.md) §1 and §4 do — §4 gives `Chain()` and `Actor()` to every
 stratum, read-only. The design was right; the summary was not.)
 
-**Status:** K0 (the contracts), K1 (codegen, the manifest, the harness) and K2's SDK half
+**Status:** K0 (the contracts), K1 (codegen, the manifest, the harness), K2's SDK half
 (the versioned wire contract and the guest fixtures) have landed.
 [DESIGN.md](DESIGN.md) is the whole document — the transcribed semantics, the contract types,
 the amendments from the engine build, the open-decision ledger, and the build phases that

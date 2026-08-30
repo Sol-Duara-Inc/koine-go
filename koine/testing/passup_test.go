@@ -8,6 +8,7 @@ import (
 	"github.com/sol-duara-inc/koine-go/cmd/koinegen/fixtures/station"
 	"github.com/sol-duara-inc/koine-go/cmd/koinegen/fixtures/strata/deployment"
 	"github.com/sol-duara-inc/koine-go/koine"
+	"github.com/sol-duara-inc/koine-go/koine/selector"
 	koinetest "github.com/sol-duara-inc/koine-go/koine/testing"
 )
 
@@ -180,4 +181,69 @@ func TestHarness_AStationMustBeAddressable(t *testing.T) {
 		}
 	}()
 	koinetest.Run(station.DeploymentSteward{}, koinetest.Deliver(failed()))
+}
+
+// TestHarness_OnePassagePerDeliveryHoldsOnTheBenchToo pins the same gate the
+// sandbox enforces, from the author's own test surface. The bench holds a
+// station to the rule the engine holds it to, or it is not the semantics
+// minus the transport.
+func TestHarness_OnePassagePerDeliveryHoldsOnTheBenchToo(t *testing.T) {
+	t.Run("withhold suppresses a hook's pass", func(t *testing.T) {
+		out := koinetest.Run(&withholdingHookStation{}, koinetest.Deliver(failed()))
+		if len(out.Passages) != 1 {
+			t.Fatalf("the station made %d passages: %#v", len(out.Passages), out.Passages)
+		}
+		if !out.Passages[0].Withheld {
+			t.Fatal("the hook's pass beat the withhold — the only gate did not gate")
+		}
+	})
+
+	t.Run("a second pass is refused by name", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("a station passed up twice and carried on")
+			}
+			if msg, ok := r.(string); !ok || !strings.Contains(msg, "passed up twice") {
+				t.Fatalf("the trap said %v", r)
+			}
+		}()
+		koinetest.Run(&doublePasser{}, koinetest.Deliver(failed()))
+	})
+}
+
+// withholdingHookStation withholds in its body and declares a Pre hook that
+// would otherwise pass at step end.
+type withholdingHookStation struct{ koine.ObserverBase }
+
+func (withholdingHookStation) Identity() koine.Identity {
+	return koine.Identity{Group: "g", Author: "a", Name: "n"}
+}
+func (withholdingHookStation) Awaits() []selector.Selector {
+	return selector.List(deployment.Resolved())
+}
+func (withholdingHookStation) Complete() koine.Contract { return koine.DefaultAllAwaited }
+func (s *withholdingHookStation) Resolve(d koine.Delivery, yield koine.Yield) {
+	dep := d.(deployment.ResolvedDelivery)
+	s.Withhold(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
+	yield(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
+}
+func (withholdingHookStation) Pre(d koine.Delivery) koine.Utterance {
+	dep := d.(deployment.ResolvedDelivery)
+	return deployment.DeploymentRecorded{Artifact: dep.ArtifactID}
+}
+
+// doublePasser hands the parent two different objects in one delivery.
+type doublePasser struct{ koine.ObserverBase }
+
+func (doublePasser) Identity() koine.Identity {
+	return koine.Identity{Group: "g", Author: "a", Name: "n"}
+}
+func (doublePasser) Awaits() []selector.Selector { return selector.List(deployment.Resolved()) }
+func (doublePasser) Complete() koine.Contract    { return koine.DefaultAllAwaited }
+func (s *doublePasser) Resolve(d koine.Delivery, yield koine.Yield) {
+	dep := d.(deployment.ResolvedDelivery)
+	s.PassUp(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
+	s.PassUp(deployment.Deploy{Artifact: dep.ArtifactID, Target: dep.Environment})
+	yield(deployment.DeploymentRecorded{Artifact: dep.ArtifactID})
 }

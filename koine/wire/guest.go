@@ -122,6 +122,10 @@ type Guest struct {
 	// line. It gates every yield after it, so nothing is stored past a
 	// stoppage the body did not cause and cannot fix.
 	fault string
+	// passing is the one-passage-per-delivery gate. It is koine's, not
+	// this package's, because the bench enforces the same rule and a
+	// second copy would be a second thing to drift.
+	passing koine.Passing
 }
 
 // New builds the guest runtime over a given host. Tests use it; the engine
@@ -152,6 +156,7 @@ func (g *Guest) Fault() string { return g.fault }
 // (A9): a frame that cannot be read runs no body at all.
 func (g *Guest) Deliver(frame []byte) Outcome {
 	g.refusal, g.fault = "", ""
+	g.passing.Reset()
 	f, err := DecodeDelivery(frame)
 	if err != nil {
 		return g.refuse(err.Error())
@@ -208,7 +213,11 @@ func (g *Guest) Deliver(frame []byte) Outcome {
 	// sandbox cannot drift apart about what a hook means.
 	if g.fault == "" {
 		if err := koine.RunHooks(g.station.Koine, delivered, lineage{g: g}); err != nil {
-			g.faultBelowTheLine(err.Error())
+			// A station that declared Post without Pre wrote a shape
+			// that cannot run, which is the author's own mistake and
+			// not a host that could not answer. It traps, and the
+			// record names the right party.
+			panic("koine/wire: " + err.Error())
 		}
 	}
 

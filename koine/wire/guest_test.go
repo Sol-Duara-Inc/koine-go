@@ -21,9 +21,14 @@ import (
 type scriptHost struct {
 	yields    []map[string]any
 	exchanges []wire.ExchangeFrame
-	ackPolls  int
-	valPolls  int
-	logs      []string
+	// rawExchanges are the frames exactly as they left the guest. The
+	// decoded ones above are convenient; these are what the host receives,
+	// and the only thing worth comparing when two spellings of one
+	// behaviour are held to producing the same traffic.
+	rawExchanges [][]byte
+	ackPolls     int
+	valPolls     int
+	logs         []string
 
 	// what this host answers
 	yieldCode  uint32 // the host's code; zero is success
@@ -54,6 +59,7 @@ func (h *scriptHost) Exchange(frame []byte) uint64 {
 		panic("the guest sent an unreadable exchange frame: " + err.Error())
 	}
 	h.exchanges = append(h.exchanges, f)
+	h.rawExchanges = append(h.rawExchanges, append([]byte(nil), frame...))
 	if h.noHandle {
 		return 0
 	}

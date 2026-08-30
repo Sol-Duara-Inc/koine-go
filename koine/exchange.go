@@ -31,15 +31,16 @@ type Exchange struct {
 // that stands in the payload's place when the expected future went the other
 // way. Branch on Err; don't defend against it.
 //
-// The design's stronger sentence — "Err is NEVER transport" — is true again,
-// and it was not always. Until conduit-go#200 the host carried a genuine
-// domain breach and a deadline or an unknown handle through one field, so a
-// station could be handed a breach that was never a fact about its domain.
-// #200 split them: a breach sets the flag, and Conduit being unable to
-// answer sets an error with the flag clear. koine/wire reads the two apart —
-// the first is a *Variant a body branches on, the second a *Stopped
-// attributed below the line — so what reaches Err here is a finding about
-// the work.
+// The design's stronger sentence — "Err is NEVER transport" — stays
+// RETRACTED, and conduit-go#200 did not restore it. #200 split the wire's two
+// answers, which is what lets koine/wire tell a finding about the work from
+// Conduit being unable to answer; but BOTH still arrive here, in this one
+// field. A *wire.Variant is the expected future going the other way, and a
+// *wire.Stopped is the machinery underneath — and a body that treats them
+// alike is a body that will one day store an event about a deadline.
+//
+// Branch on the kind, not just on non-nil. Splitting them into separate
+// fields is wire v2, and both sides move together when it lands.
 //
 // By is subject to the same honesty: wire v1's host names no comprehender on
 // either beat, so what arrives is the party that answered rather than the

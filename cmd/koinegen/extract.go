@@ -521,7 +521,7 @@ func (x *extractor) resolveBody(station string, fn *ast.FuncDecl) (resolved, err
 			return true
 		}
 		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == b.yieldParam && len(call.Args) == 1 {
-			emit, ok := x.emit(call.Args[0])
+			emit, ok := x.emit(b, call.Args[0])
 			if !ok {
 				return true
 			}
@@ -587,8 +587,24 @@ func (x *extractor) delivery(station string, fn *ast.FuncDecl) (*Delivery, *Name
 	return found, ns, nil
 }
 
-func (x *extractor) emit(expr ast.Expr) (manifest.Emit, bool) {
+// emit reads one yielded utterance. An author may yield a literal or a name
+// they bound to one — both are ordinary Go, and a manifest that saw only the
+// first would UNDER-declare: the host will one day refuse a station whose
+// manifest and body disagree, and an under-declared emit turns a perfectly
+// legal yield into a load-time refusal.
+//
+// A name is followed under the same discipline as every other name here: it
+// must be bound exactly once, and the thing it was bound to must be a literal
+// this analyzer can read. Anything else is not guessed at.
+func (x *extractor) emit(b *body, expr ast.Expr) (manifest.Emit, bool) {
 	var e manifest.Emit
+	if ident, isName := expr.(*ast.Ident); isName {
+		lit, found := x.boundLiteral(b, ident.Name)
+		if !found {
+			return e, false
+		}
+		expr = lit
+	}
 	lit, ok := expr.(*ast.CompositeLit)
 	if !ok {
 		return e, false
@@ -610,4 +626,48 @@ func (x *extractor) emit(expr ast.Expr) (manifest.Emit, bool) {
 		return e, false
 	}
 	return manifest.Emit{Go: pkg.Name + "." + t.Name, Type: t.Event, Namespace: ns.Namespace}, true
+}
+
+// boundLiteral follows a name to the composite literal it was bound to, when
+// the binding is one this analyzer can read with certainty: bound exactly
+// once, to a literal, in this body. A name bound more than once is a name the
+// analyzer will not reason about — the same rule the handle and seat
+// followers hold to.
+func (x *extractor) boundLiteral(b *body, name string) (*ast.CompositeLit, bool) {
+	if len(b.writes[name]) != 1 {
+		return nil, false
+	}
+	var found *ast.CompositeLit
+	ast.Inspect(b.fn.Body, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		switch stmt := n.(type) {
+		case *ast.AssignStmt:
+			for i, rhs := range stmt.Rhs {
+				if i >= len(stmt.Lhs) {
+					continue
+				}
+				if id, ok := stmt.Lhs[i].(*ast.Ident); !ok || id.Name != name {
+					continue
+				}
+				if lit, ok := rhs.(*ast.CompositeLit); ok {
+					found = lit
+					return false
+				}
+			}
+		case *ast.ValueSpec:
+			for i, v := range stmt.Values {
+				if i >= len(stmt.Names) || stmt.Names[i].Name != name {
+					continue
+				}
+				if lit, ok := v.(*ast.CompositeLit); ok {
+					found = lit
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return found, found != nil
 }

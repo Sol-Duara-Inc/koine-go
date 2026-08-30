@@ -445,11 +445,21 @@ no second surface to say the same thing twice — §6's branch control already c
 usage, and a station that asked for its parent's outcome has said in code that it intends to
 handle it.
 
+**The two texts that looked contradictory are both true, on different paths** (owner,
+2026-08-30, resolving the finding this phase surfaced): an EXPLICIT pass — the verbs, or a
+`Pre` transform — ships the offered object in the exchange's `intent`, and the transform is
+real, which is its whole point. The ZERO-CODE default pass is the **host's**, served from the
+object the door already minted, with no guest bytes at all. *"Nothing is re-spoken"* governs
+the default; *"Pre may transform"* governs the explicit. That is exactly what this SDK
+implements: a station that writes nothing emits nothing.
+
 **What is NOT settled.** The host half is conduit-go#210, which at the time of writing does not
 exist. The reserved type strings (`koine.passup`, `koine.withhold`), which frame field carries
 the offered object, what a concluded parent answers with, and how an unfilled parent is spelled
-are all PROPOSALS — gathered in `koine/wire/passup.go` under one heading so that agreeing them
-changes one file. K2 shipped two halves of one wire written against two readings of it; the
+are all PROPOSALS — gathered in `koine/wire/passup.go` under one heading. They are written
+down twice, because `cmd/koinegen` cannot import the guest contract to derive a manifest
+against it; a test pins the two copies to each other, so a divergence is a failing test rather
+than a misroute. K2 shipped two halves of one wire written against two readings of it; the
 lesson was not *read harder* but *do not call a proposal a conformance*.
 
 ## 7. Registration: the manifest, derived from code

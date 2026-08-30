@@ -12,6 +12,7 @@
   ],
   "complete": "all-awaited",
   "emits": [
+    "dev.cdevents.deployment.recorded",
     "dev.cdevents.deployment.requested"
   ],
   "koine": {
@@ -20,6 +21,13 @@
       "dev.cdevents.deployment"
     ],
     "events": [
+      {
+        "type": "dev.cdevents.deployment.recorded",
+        "direction": "emit",
+        "reconciliation": {
+          "declared": false
+        }
+      },
       {
         "type": "dev.cdevents.deployment.requested",
         "direction": "emit",
@@ -37,6 +45,11 @@
       }
     ],
     "emits": [
+      {
+        "go": "deployment.DeploymentRecorded",
+        "type": "dev.cdevents.deployment.recorded",
+        "namespace": "dev.cdevents.deployment"
+      },
       {
         "go": "deployment.Deploy",
         "type": "dev.cdevents.deployment.requested",

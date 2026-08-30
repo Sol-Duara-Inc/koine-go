@@ -887,3 +887,171 @@ func TestCrossing_ThePassUpSpellingsAreDeclaredInOnePlace(t *testing.T) {
 		t.Errorf("the manifest and the wire disagree about the spellings: %#v", p)
 	}
 }
+
+// TestCrossing_TheHookFormReachesTheBoundaryToo puts the sugar in front of
+// the real loader. The named hooks are sugar over the three verbs and nothing
+// else; that claim is worth what the place it is checked is worth, and
+// off-target twin comparison is not the boundary.
+func TestCrossing_TheHookFormReachesTheBoundaryToo(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "chain-hooks", buildGuest(t, "fixtures/guest/chainhooks"))
+	if err != nil {
+		t.Fatalf("the loader refused the hook-form guest: %v", err)
+	}
+	defer station.Close(context.Background())
+
+	if m := station.Manifest(); m == nil || m.Identity.Name != "chain-hooks" {
+		t.Fatalf("manifest = %#v", m)
+	}
+
+	var mu sync.Mutex
+	var seen []koinehost.ExchangeRequest
+	broker := koinehost.NewMemoryBroker()
+	broker.RegisterHandler(wire.TypePassUp, func(req koinehost.ExchangeRequest) koinehost.ExchangeResponse {
+		mu.Lock()
+		seen = append(seen, req)
+		mu.Unlock()
+		return koinehost.ExchangeResponse{Status: 200}
+	})
+
+	res, err := station.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  koinehost.NewRecordingEmitter(),
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "run-hooks-1",
+			ChainID:   "chain-hooks-1",
+			Event: json.RawMessage(`{"outcome":"failure","artifactId":"sha256:bad",` +
+				`"environment":"prod"}`),
+		},
+	})
+	if err != nil || res.Status != 0 {
+		t.Fatalf("run = %d, %v (logs %v)", res.Status, err, res.Logs)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("a hook-declared station made %d passages, want one", len(seen))
+	}
+	var offered map[string]any
+	if err := json.Unmarshal(seen[0].Intent, &offered); err != nil {
+		t.Fatalf("the hook's object is not readable: %v", err)
+	}
+	if offered["type"] != "dev.cdevents.deployment.recorded" || offered["artifact"] != "sha256:bad" {
+		t.Errorf("the hook minted %v", offered)
+	}
+}
+
+// TestCrossing_AnUnfilledParentIsDeterminate makes the unfilled-seat branch
+// live across the real boundary. conduit-go#210 pins that the host answers a
+// declared-but-not-loaded parent with Status 501, an Error beginning with
+// koine.ErrNotImplemented's own text, and Breached false. That is a
+// DETERMINATE answer, not a malfunction: the same child starts working the
+// day the parent installs, with nothing rewritten.
+func TestCrossing_AnUnfilledParentIsDeterminate(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer station.Close(context.Background())
+
+	broker := koinehost.NewMemoryBroker()
+	broker.RegisterHandler(wire.TypePassUp, func(koinehost.ExchangeRequest) koinehost.ExchangeResponse {
+		return koinehost.ExchangeResponse{
+			Status:   501,
+			Error:    wire.UnfilledPrefix + `: no controller serves "com.example.payments-engineering"`,
+			Breached: false,
+		}
+	})
+
+	res, err := station.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  koinehost.NewRecordingEmitter(),
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "run-unfilled",
+			ChainID:   "chain-unfilled",
+			Event: json.RawMessage(`{"outcome":"failure","artifactId":"sha256:bad",` +
+				`"environment":"prod"}`),
+		},
+	})
+	// Determinate: the run concludes normally. An empty seat is not a
+	// stoppage below the line, and reading it as one would fail a station
+	// for a parent nobody has installed yet.
+	if err != nil || res.Status != 0 {
+		t.Fatalf("an unfilled parent stopped the run: %d, %v (logs %v)", res.Status, err, res.Logs)
+	}
+	for _, line := range res.Logs {
+		if strings.HasPrefix(line, wire.FaultPrefix) {
+			t.Errorf("an empty seat was attributed as a stoppage: %q", line)
+		}
+	}
+	// The body took its finding branch, because a Conclusion carrying an
+	// unfilled parent is a finding it can branch on.
+	var spokeDeploy bool
+	for _, y := range res.Yields {
+		if y.Type == "dev.cdevents.deployment.requested" {
+			spokeDeploy = true
+		}
+	}
+	if !spokeDeploy {
+		t.Fatalf("the body did not branch on the empty seat: %#v", res.Yields)
+	}
+}
+
+// TestCrossing_TheOnlyGateHoldsOnTheRealBoundary puts one case of the
+// one-passage rule in front of the real host: a station that withholds makes
+// no pass, whatever else it declares.
+func TestCrossing_TheOnlyGateHoldsOnTheRealBoundary(t *testing.T) {
+	h, ctx := newHost(t)
+	station, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer station.Close(context.Background())
+
+	var mu sync.Mutex
+	var kinds []string
+	broker := koinehost.NewMemoryBroker()
+	for _, kind := range []string{wire.TypePassUp, wire.TypeWithhold} {
+		k := kind
+		broker.RegisterHandler(k, func(koinehost.ExchangeRequest) koinehost.ExchangeResponse {
+			mu.Lock()
+			kinds = append(kinds, k)
+			mu.Unlock()
+			return koinehost.ExchangeResponse{Status: 200}
+		})
+	}
+
+	res, err := station.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  koinehost.NewRecordingEmitter(),
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "run-gate",
+			ChainID:   "chain-gate",
+			Event:     json.RawMessage(`{"outcome":"success","artifactId":"sha256:fine"}`),
+		},
+	})
+	if err != nil || res.Status != 0 {
+		t.Fatalf("run = %d, %v (logs %v)", res.Status, err, res.Logs)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, k := range kinds {
+		if k == wire.TypePassUp {
+			t.Fatal("a withheld delivery still passed up — the only gate did not gate")
+		}
+	}
+	if len(kinds) != 1 {
+		t.Fatalf("the withhold branch spoke %v", kinds)
+	}
+}
