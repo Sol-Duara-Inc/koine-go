@@ -48,22 +48,22 @@ func drivenPaths(t *testing.T) map[string][]behaviour {
 		"DeploymentSteward": {
 			{
 				name:    "the success branch",
-				station: station.DeploymentSteward{},
-				out: koinetest.Run(station.DeploymentSteward{},
+				station: &station.DeploymentSteward{},
+				out: koinetest.Run(&station.DeploymentSteward{},
 					koinetest.Deliver(succeeded),
 					koinetest.Exchange("history.last", lastGood)),
 			},
 			{
 				name:    "the failure branch, answered",
-				station: station.DeploymentSteward{},
-				out: koinetest.Run(station.DeploymentSteward{},
+				station: &station.DeploymentSteward{},
+				out: koinetest.Run(&station.DeploymentSteward{},
 					koinetest.Deliver(failed),
 					koinetest.Exchange("history.last", lastGood)),
 			},
 			{
 				name:    "the failure branch, variant",
-				station: station.DeploymentSteward{},
-				out: koinetest.Run(station.DeploymentSteward{},
+				station: &station.DeploymentSteward{},
+				out: koinetest.Run(&station.DeploymentSteward{},
 					koinetest.Deliver(failed),
 					koinetest.ExchangeFails("history.last", errors.New("nothing good to fall back to"))),
 			},
@@ -71,8 +71,8 @@ func drivenPaths(t *testing.T) map[string][]behaviour {
 		"DeploymentAuditor": {
 			{
 				name:    "the only branch",
-				station: station.DeploymentAuditor{},
-				out: koinetest.Run(station.DeploymentAuditor{},
+				station: &station.DeploymentAuditor{},
+				out: koinetest.Run(&station.DeploymentAuditor{},
 					koinetest.Deliver(failed),
 					koinetest.Exchange("history.last", lastGood)),
 			},
@@ -85,15 +85,15 @@ func drivenPaths(t *testing.T) map[string][]behaviour {
 		"DeploymentRehearsal": {
 			{
 				name:    "the variant branch",
-				station: station.DeploymentRehearsal{},
-				out: koinetest.Run(station.DeploymentRehearsal{},
+				station: &station.DeploymentRehearsal{},
+				out: koinetest.Run(&station.DeploymentRehearsal{},
 					koinetest.Deliver(failed),
 					koinetest.ExchangeFails("history.last", errors.New("nothing good to fall back to"))),
 			},
 			{
 				name:    "the answered branch",
-				station: station.DeploymentRehearsal{},
-				out: koinetest.Run(station.DeploymentRehearsal{},
+				station: &station.DeploymentRehearsal{},
+				out: koinetest.Run(&station.DeploymentRehearsal{},
 					koinetest.Deliver(failed),
 					koinetest.Exchange("history.last", lastGood),
 					koinetest.Exchange("ledger.note", noted)),

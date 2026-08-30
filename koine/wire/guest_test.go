@@ -21,9 +21,14 @@ import (
 type scriptHost struct {
 	yields    []map[string]any
 	exchanges []wire.ExchangeFrame
-	ackPolls  int
-	valPolls  int
-	logs      []string
+	// rawExchanges are the frames exactly as they left the guest. The
+	// decoded ones above are convenient; these are what the host receives,
+	// and the only thing worth comparing when two spellings of one
+	// behaviour are held to producing the same traffic.
+	rawExchanges [][]byte
+	ackPolls     int
+	valPolls     int
+	logs         []string
 
 	// what this host answers
 	yieldCode  uint32 // the host's code; zero is success
@@ -54,6 +59,7 @@ func (h *scriptHost) Exchange(frame []byte) uint64 {
 		panic("the guest sent an unreadable exchange frame: " + err.Error())
 	}
 	h.exchanges = append(h.exchanges, f)
+	h.rawExchanges = append(h.rawExchanges, append([]byte(nil), frame...))
 	if h.noHandle {
 		return 0
 	}
@@ -256,13 +262,20 @@ func TestWire_ABreachIsATypedVariantNeverTransport(t *testing.T) {
 		t.Errorf("the variant did not reach the body: %v", host.yields[0])
 	}
 
-	// A breach the host named without setting the flag is the same fact.
-	unflagged := &scriptHost{answer: wire.AnswerFrame{Status: 500, Error: "gone"}}
-	if got := wire.New(stewardStation(&variantSpeaker{}), unflagged).Deliver(stewardDelivery(failedDeployment)); got != wire.Resolved {
-		t.Fatalf("deliver = %s", got)
+	// An error the host named WITHOUT the flag is not a breach at all —
+	// conduit-go#200 split them, so this is Conduit saying it could not
+	// answer, and it stops the run rather than reaching the body as a
+	// finding about its domain.
+	unflagged := &scriptHost{answer: wire.AnswerFrame{Status: 504, Error: "context deadline exceeded"}}
+	guest = wire.New(stewardStation(&variantSpeaker{}), unflagged)
+	if got := guest.Deliver(stewardDelivery(failedDeployment)); got != wire.Unanswered {
+		t.Fatalf("a deadline reached the body as a domain variant: %s", got)
 	}
-	if unflagged.yields[0]["artifact"] != "gone" {
-		t.Errorf("an unflagged breach read as filled: %v", unflagged.yields[0])
+	if len(unflagged.yields) != 0 {
+		t.Errorf("a stoppage below the line still stored %#v", unflagged.yields)
+	}
+	if !strings.Contains(guest.Fault(), "504") {
+		t.Errorf("the fault did not name the status: %s", guest.Fault())
 	}
 
 	// A breach with a status and no words still reads as a breach, and

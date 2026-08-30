@@ -80,6 +80,10 @@
           "record:read"
         ]
       }
-    ]
+    ],
+    "passUp": {
+      "declared": false,
+      "awaits": false
+    }
   }
 }

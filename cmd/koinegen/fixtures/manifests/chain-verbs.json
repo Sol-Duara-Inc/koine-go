@@ -4,7 +4,7 @@
   "identity": {
     "group": "payment-engineering",
     "author": "mchen",
-    "name": "deployment-auditor"
+    "name": "chain-verbs"
   },
   "claim": "dev.cdevents.deployment",
   "awaits": [
@@ -12,17 +12,22 @@
   ],
   "complete": "all-awaited",
   "emits": [
+    "dev.cdevents.deployment.requested",
     "dev.cdevents.deployment.recorded"
   ],
-  "exchanges": [
-    "history.last"
-  ],
   "koine": {
-    "stratum": "execution",
+    "stratum": "observer",
     "lineage": [
       "dev.cdevents.deployment"
     ],
     "events": [
+      {
+        "type": "dev.cdevents.deployment.requested",
+        "direction": "emit",
+        "reconciliation": {
+          "declared": false
+        }
+      },
       {
         "type": "dev.cdevents.deployment.recorded",
         "direction": "emit",
@@ -41,36 +46,27 @@
     ],
     "emits": [
       {
+        "go": "deployment.Deploy",
+        "type": "dev.cdevents.deployment.requested",
+        "namespace": "dev.cdevents.deployment"
+      },
+      {
         "go": "deployment.DeploymentRecorded",
         "type": "dev.cdevents.deployment.recorded",
         "namespace": "dev.cdevents.deployment"
       }
     ],
-    "exchanges": [
-      {
-        "seat": "history",
-        "name": "history.last",
-        "consumption": "concurrent",
-        "chainRole": "blocking",
-        "returns": "dev.cdevents.deployment.finished",
-        "permissions": [
-          "record:read"
-        ]
-      }
-    ],
-    "seats": [
-      {
-        "seat": "history",
-        "tool": "record",
-        "connection": "record-query",
-        "permissions": [
-          "record:read"
-        ]
-      }
-    ],
+    "exchanges": [],
+    "seats": null,
     "passUp": {
-      "declared": false,
-      "awaits": false
+      "declared": true,
+      "verbs": [
+        "passUp",
+        "await"
+      ],
+      "awaits": true,
+      "type": "koine.passup",
+      "withholdType": "koine.withhold"
     }
   }
 }

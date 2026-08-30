@@ -13,7 +13,7 @@
 // scripted exchanges. This harness is therefore not a mock of the semantics.
 // It IS the semantics minus the transport.
 //
-//	out := koinetest.Run(DeploymentSteward{},
+//	out := koinetest.Run(&DeploymentSteward{},
 //	        koinetest.Deliver(deployment.ResolvedDelivery{Outcome: koine.Failure}),
 //	        koinetest.Exchange("history.last", lastGood))
 //	// assert on out.Utterances, out.Exchanges, out.Consumption
@@ -49,6 +49,12 @@ type Out struct {
 
 	// Exchanges are the intents spoken, in the order they were uttered.
 	Exchanges []Spoken
+
+	// Passages are the hand-offs to the parent, in order. A station that
+	// wrote no verbs and declared no hooks makes none of its own: the
+	// step-end default pass is the host duty, and this slice being empty
+	// is how a run says so.
+	Passages []Passage
 
 	// Consumption is how each exchange was treated, by exchange name.
 	// Both patterns are witnessed, not inferred: Value() reports itself
@@ -100,6 +106,20 @@ func StopAfter(n int) Option {
 	return func(r *run) { r.stopAfter = n }
 }
 
+// Standing is where the host says this station stands: the chain it is in and
+// the actor whose authority it carries. Construction is delivery, and a run
+// that skipped it would hand the body an empty Base and call that a test.
+func Standing(chain koine.ChainRef, actor koine.ActorRef) Option {
+	return func(r *run) { r.chain, r.actor = chain, actor }
+}
+
+// Parent scripts what this station's parent concludes when its step ends. A
+// run that never sets one answers a plain success, which is what a parent
+// that enriched and stored concludes.
+func Parent(c koine.Conclusion) Option {
+	return func(r *run) { r.parent = c }
+}
+
 type scripted struct {
 	answer Marshaler
 	err    error
@@ -111,19 +131,54 @@ type run struct {
 	delivery   koine.Delivery
 	script     map[string]scripted
 	stopAfter  int
+	chain      koine.ChainRef
+	actor      koine.ActorRef
+	parent     koine.Conclusion
 	utterances []koine.Utterance
 	spoken     []*Spoken
+	passages   []*Passage
+	// passing is koine's one-passage gate, the same one the sandbox
+	// enforces. The bench holds stations to the rule the engine holds
+	// them to, or it is not the semantics minus the transport.
+	passing koine.Passing
+}
+
+// Passage is one hand-off to the parent as the run saw it: what went up, or
+// what was withheld, and whether the body waited for the answer.
+type Passage struct {
+	// Offered is the object handed to the parent, or withheld from it.
+	Offered koine.Utterance
+	// Withheld is the only suppression. It is recorded because
+	// suppressing a feature the fleet agreed on is a fact a test should
+	// be able to see.
+	Withheld bool
+	// Awaited says the body asked for the parent conclusion — which is
+	// how a station declares it will handle what comes back.
+	Awaited bool
 }
 
 // Run drives the station and returns everything it said.
 func Run(k koine.Koine, opts ...Option) Out {
-	r := &run{script: map[string]scripted{}, stopAfter: -1}
+	r := &run{
+		script:    map[string]scripted{},
+		stopAfter: -1,
+		parent:    koine.Conclusion{Outcome: koine.Success},
+	}
 	for _, opt := range opts {
 		opt(r)
 	}
 	if r.delivery == nil {
 		panic("koinetest: Run needs koinetest.Deliver(...) — a station resolves from a delivery, and there is nothing here to be a function of")
 	}
+	// Construction is delivery (§4). The harness IS the semantics minus
+	// the transport, so it builds the station the way a host does —
+	// otherwise a body that reads its chain, or speaks to its parent,
+	// would find an empty Base and the test would be testing a station
+	// nobody constructed.
+	if !koine.Construct(k, koine.Standing{Chain: r.chain, Actor: r.actor, Lineage: r}) {
+		panic("koinetest: Run could not construct this station. Take its address — koinetest.Run(&Steward{}, ...) — because standard parts are state and state written into a copy is state nobody can read. A station that is not addressable is one the host could not construct either, and a harness that let you test it would not be the semantics minus the transport.")
+	}
+
 	d := r.delivery
 	if b, ok := d.(koine.Bindable); ok {
 		d = b.Bind(r)
@@ -137,6 +192,16 @@ func Run(k koine.Koine, opts ...Option) Out {
 		return true
 	})
 
+	// The named hooks, run exactly as the sandbox runs them — same
+	// function, same order. A harness that ran its own version of this
+	// would be a harness that could disagree with the engine about what a
+	// hook does, which is the one thing it must never do.
+	if err := koine.RunHooks(k, d, r); err != nil {
+		// The author's own shape mistake, said the way the sandbox says
+		// it: a station that declared Post without Pre cannot run.
+		panic("koinetest: " + err.Error())
+	}
+
 	out := Out{
 		Identity:    k.Identity(),
 		Awaits:      k.Awaits(),
@@ -149,6 +214,9 @@ func Run(k koine.Koine, opts ...Option) Out {
 		if out.Consumption[s.Name] != manifest.Inline {
 			out.Consumption[s.Name] = s.Consumption
 		}
+	}
+	for _, p := range r.passages {
+		out.Passages = append(out.Passages, *p)
 	}
 	return out
 }
@@ -214,4 +282,39 @@ func (r *run) scriptedNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// PassUp records the hand-off and returns a passage. koinetest is the only
+// Lineage this SDK ships beside the wire's, and like the wire's it invents no
+// answer: what the parent concludes is what the test said it concludes.
+func (r *run) PassUp(u koine.Utterance) koine.Passage {
+	if !r.passing.Offer() {
+		return 0 // withheld; the pass is what suppression suppresses
+	}
+	r.passages = append(r.passages, &Passage{Offered: u})
+	return koine.Passage(len(r.passages)) // one-based; zero is no passage at all
+}
+
+// Withhold records the suppression. Nothing goes up.
+func (r *run) Withhold(u koine.Utterance) {
+	if !r.passing.Suppress() {
+		return
+	}
+	r.passages = append(r.passages, &Passage{Offered: u, Withheld: true})
+}
+
+// AwaitPass answers what the test said the parent concludes — except for a
+// suppressed passage, where the answer is single-sourced beside the gate
+// (koine.Passing.AwaitedConclusion) so the bench and the sandbox cannot
+// drift about what awaiting a withheld pass means.
+func (r *run) AwaitPass(p koine.Passage) koine.Conclusion {
+	if p == 0 {
+		if c, ok := r.passing.AwaitedConclusion(); ok {
+			return c
+		}
+	}
+	if p >= 1 && int(p) <= len(r.passages) {
+		r.passages[p-1].Awaited = true
+	}
+	return r.parent
 }

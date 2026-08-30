@@ -4,7 +4,7 @@
   "identity": {
     "group": "payment-engineering",
     "author": "mchen",
-    "name": "deployment-auditor"
+    "name": "chain-hooks"
   },
   "claim": "dev.cdevents.deployment",
   "awaits": [
@@ -14,11 +14,8 @@
   "emits": [
     "dev.cdevents.deployment.recorded"
   ],
-  "exchanges": [
-    "history.last"
-  ],
   "koine": {
-    "stratum": "execution",
+    "stratum": "observer",
     "lineage": [
       "dev.cdevents.deployment"
     ],
@@ -46,31 +43,17 @@
         "namespace": "dev.cdevents.deployment"
       }
     ],
-    "exchanges": [
-      {
-        "seat": "history",
-        "name": "history.last",
-        "consumption": "concurrent",
-        "chainRole": "blocking",
-        "returns": "dev.cdevents.deployment.finished",
-        "permissions": [
-          "record:read"
-        ]
-      }
-    ],
-    "seats": [
-      {
-        "seat": "history",
-        "tool": "record",
-        "connection": "record-query",
-        "permissions": [
-          "record:read"
-        ]
-      }
-    ],
+    "exchanges": [],
+    "seats": null,
     "passUp": {
-      "declared": false,
-      "awaits": false
+      "declared": true,
+      "hooks": [
+        "pre",
+        "post"
+      ],
+      "awaits": true,
+      "type": "koine.passup",
+      "withholdType": "koine.withhold"
     }
   }
 }

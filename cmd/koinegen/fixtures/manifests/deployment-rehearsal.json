@@ -99,6 +99,10 @@
           "ledger:append"
         ]
       }
-    ]
+    ],
+    "passUp": {
+      "declared": false,
+      "awaits": false
+    }
   }
 }
