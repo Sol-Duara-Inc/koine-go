@@ -21,6 +21,7 @@ package conformance_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +33,8 @@ import (
 
 	"github.com/sol-duara-inc/koine-go/koine/wire"
 	"github.com/solduara/conduit-go/pkg/koinehost"
+	"github.com/solduara/conduit-go/pkg/reconcile"
+	"github.com/solduara/conduit-go/pkg/server"
 )
 
 func repoRoot(t *testing.T) string {
@@ -632,17 +635,166 @@ func TestCrossing_AFulfillerThatAnswersWithNothingStoresNothing(t *testing.T) {
 	}
 }
 
-// The pass-up crossing (koine-go#5). WHAT THESE PROVE IS BOUNDED, AND THE
-// BOUND IS THE POINT: conduit-go#210's ChainBroker does not exist — there is
-// no ChainBroker, no pass-up store and no reserved type anywhere in the
-// engine — so nothing here can prove conformance. There is nothing to
-// conform to yet.
-//
-// What they DO prove: a guest speaking the whole pass-up surface loads into
-// the real loader, its derived manifest reads, and the frames it speaks are
-// well formed enough that the merged broker answers them. When #210 lands,
-// these tests are where the two halves meet, and the spellings in
-// koine/wire/passup.go are what will have to agree.
+// The pass-up crossing (koine-go#5). Both the MemoryBroker tests and the
+// ChainBroker tests exist here on purpose:
+//   - MemoryBroker tests verify that the pass-up protocol frames and verbs
+//     spoken by guests are well-formed against an in-memory test double.
+//   - ChainBroker tests (TestCrossing_APassUpMeetsTheRealChainBroker and
+//     TestCrossing_AWithholdMeetsTheRealChainBroker) verify full end-to-end
+//     conformance against conduit-go's real server.ChainBroker and
+//     server.ChainCoordinator.
+
+// stubChainRegistry implements server.ChainRegistry for crossing tests.
+type stubChainRegistry struct {
+	parentNS map[string]string
+	ctrlRuns map[string]struct{ runID, controller string }
+}
+
+func (s *stubChainRegistry) LineageFor(envelope []byte) ([]reconcile.MintedLayer, error) {
+	return nil, nil
+}
+
+func (s *stubChainRegistry) ParentNamespaceOf(runID string) (string, bool) {
+	ns, ok := s.parentNS[runID]
+	return ns, ok
+}
+
+func (s *stubChainRegistry) ControllerRunByNamespace(ns string) (string, string, bool) {
+	r, ok := s.ctrlRuns[ns]
+	return r.runID, r.controller, ok
+}
+
+func TestCrossing_APassUpMeetsTheRealChainBroker(t *testing.T) {
+	h, ctx := newHost(t)
+
+	parentStation, err := h.Load(ctx, "deployment-steward", buildGuest(t, "fixtures/guest/steward"))
+	if err != nil {
+		t.Fatalf("Load parent station: %v", err)
+	}
+	defer parentStation.Close(context.Background())
+
+	childStation, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
+	if err != nil {
+		t.Fatalf("Load child station: %v", err)
+	}
+	defer childStation.Close(context.Background())
+
+	reg := &stubChainRegistry{
+		parentNS: map[string]string{"child-run": "com.example.payments"},
+		ctrlRuns: map[string]struct{ runID, controller string }{
+			"com.example.payments": {runID: "parent-run", controller: "deployment-steward"},
+		},
+	}
+
+	var mu sync.Mutex
+	parentExecuted := false
+
+	coord := server.NewChainCoordinator(server.NewMemoryPassUpStore(), reg,
+		func(ctx context.Context, runID, controllerName, eventType string, offered []byte, depth int) error {
+			mu.Lock()
+			parentExecuted = true
+			mu.Unlock()
+
+			deliv := koinehost.Delivery{
+				Version:   koinehost.WireVersion,
+				EventType: eventType,
+				RunID:     runID,
+				ChainID:   "chain-parent-1",
+				Event:     json.RawMessage(offered),
+			}
+			res, err := parentStation.Run(ctx, koinehost.Invocation{
+				Delivery: deliv,
+				Declared: true,
+			})
+			if err != nil {
+				return err
+			}
+			if res.Status != 0 {
+				return fmt.Errorf("parent station returned status %d", res.Status)
+			}
+			return nil
+		})
+
+	broker := server.NewChainBroker(coord, "child-run", "com.example.payments", 0)
+
+	emitter := koinehost.NewRecordingEmitter()
+	res, err := childStation.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  emitter,
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "child-run",
+			ChainID:   "child-chain",
+			Event: json.RawMessage(`{"outcome":"failure","artifactId":"sha256:bad",` +
+				`"environment":"prod"}`),
+		},
+	})
+	if err != nil || res.Status != 0 {
+		t.Fatalf("child station run = %d, %v (logs %v)", res.Status, err, res.Logs)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !parentExecuted {
+		t.Error("expected parent guest to execute via ChainBroker pass-up, but it was not invoked")
+	}
+	if len(emitter.Yields) == 0 {
+		t.Error("expected child station to yield after Await answered parent conclusion")
+	}
+}
+
+func TestCrossing_AWithholdMeetsTheRealChainBroker(t *testing.T) {
+	h, ctx := newHost(t)
+
+	childStation, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
+	if err != nil {
+		t.Fatalf("Load child station: %v", err)
+	}
+	defer childStation.Close(context.Background())
+
+	reg := &stubChainRegistry{
+		parentNS: map[string]string{"child-run": "com.example.payments"},
+		ctrlRuns: map[string]struct{ runID, controller string }{
+			"com.example.payments": {runID: "parent-run", controller: "deployment-steward"},
+		},
+	}
+
+	parentExecuted := false
+	coord := server.NewChainCoordinator(server.NewMemoryPassUpStore(), reg,
+		func(ctx context.Context, runID, controllerName, eventType string, offered []byte, depth int) error {
+			parentExecuted = true
+			return nil
+		})
+
+	broker := server.NewChainBroker(coord, "child-run", "com.example.payments", 0)
+
+	emitter := koinehost.NewRecordingEmitter()
+	res, err := childStation.Run(ctx, koinehost.Invocation{
+		Declared: true,
+		Emitter:  emitter,
+		Broker:   broker,
+		Delivery: koinehost.Delivery{
+			Version:   koinehost.WireVersion,
+			EventType: "dev.cdevents.deployment.finished",
+			RunID:     "child-run",
+			ChainID:   "child-chain",
+			Event: json.RawMessage(`{"outcome":"success","artifactId":"sha256:fine",` +
+				`"environment":"prod"}`),
+		},
+	})
+	if err != nil || res.Status != 0 {
+		t.Fatalf("child station run = %d, %v (logs %v)", res.Status, err, res.Logs)
+	}
+
+	if parentExecuted {
+		t.Error("withheld branch must NOT invoke parent execution")
+	}
+	if !broker.Withheld() {
+		t.Error("expected broker.Withheld() to be true for withheld branch")
+	}
+}
 
 // TestCrossing_TheChainGuestLoadsIntoTheRealHost is koine-go#5's first
 // done-condition: a fixture guest exercising all three verbs, built with the
