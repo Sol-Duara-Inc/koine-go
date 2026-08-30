@@ -686,15 +686,26 @@ func TestCrossing_APassUpMeetsTheRealChainBroker(t *testing.T) {
 		},
 	}
 
+	// THE RECEIPT DISCIPLINE (#213 review blocker): the parent must be
+	// proven to EXECUTE AND CONCLUDE, not merely to be invoked. It gets a
+	// working broker (history.last answered, the steward's own exchange) and
+	// its own emitter; its result and speech are captured into test scope
+	// and asserted in the body. Before this, the parent was invoked with a
+	// nil broker, stopped below the line at status 3, the child took its
+	// FINDING branch off the synthesized answer — and the old assertions
+	// stayed green over the whole thing.
 	var mu sync.Mutex
-	parentExecuted := false
+	parentInvoked := false
+	var parentRes koinehost.Result
+	var parentErr error
+	parentEmitter := koinehost.NewRecordingEmitter()
+	parentBroker := koinehost.NewMemoryBroker()
+	parentBroker.RegisterHandler("history.last", func(koinehost.ExchangeRequest) koinehost.ExchangeResponse {
+		return koinehost.ExchangeResponse{Status: 200, Value: json.RawMessage(`{}`)}
+	})
 
 	coord := server.NewChainCoordinator(server.NewMemoryPassUpStore(), reg,
 		func(ctx context.Context, runID, controllerName, eventType string, offered []byte, depth int) error {
-			mu.Lock()
-			parentExecuted = true
-			mu.Unlock()
-
 			deliv := koinehost.Delivery{
 				Version:   koinehost.WireVersion,
 				EventType: eventType,
@@ -705,7 +716,13 @@ func TestCrossing_APassUpMeetsTheRealChainBroker(t *testing.T) {
 			res, err := parentStation.Run(ctx, koinehost.Invocation{
 				Delivery: deliv,
 				Declared: true,
+				Emitter:  parentEmitter,
+				Broker:   parentBroker,
 			})
+			mu.Lock()
+			parentInvoked = true
+			parentRes, parentErr = res, err
+			mu.Unlock()
 			if err != nil {
 				return err
 			}
@@ -737,11 +754,23 @@ func TestCrossing_APassUpMeetsTheRealChainBroker(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if !parentExecuted {
-		t.Error("expected parent guest to execute via ChainBroker pass-up, but it was not invoked")
+	if !parentInvoked {
+		t.Fatal("the parent guest was never invoked via the ChainBroker pass-up")
 	}
-	if len(emitter.Yields) == 0 {
-		t.Error("expected child station to yield after Await answered parent conclusion")
+	// The receipt: the parent EXECUTED AND CONCLUDED — status 0, no error,
+	// and its own observable speech through its own emitter.
+	if parentErr != nil || parentRes.Status != 0 {
+		t.Fatalf("parent did not conclude: status=%d err=%v logs=%v",
+			parentRes.Status, parentErr, parentRes.Logs)
+	}
+	if len(parentEmitter.Yields) == 0 {
+		t.Fatal("the parent concluded silently — no yield reached its emitter; receipt requires speech")
+	}
+	// And the child's Await answered the parent's PLAIN conclusion: exactly
+	// its success-branch speech, never the finding branch a synthesized
+	// fault would trigger.
+	if len(emitter.Yields) != 1 {
+		t.Fatalf("child yields = %d, want exactly the success branch (a faulting parent pushes the child onto its finding branch and a second yield)", len(emitter.Yields))
 	}
 }
 
@@ -794,6 +823,15 @@ func TestCrossing_AWithholdMeetsTheRealChainBroker(t *testing.T) {
 	if !broker.Withheld() {
 		t.Error("expected broker.Withheld() to be true for withheld branch")
 	}
+	// The station still speaks its own utterance — withholding the pass is
+	// not withholding its speech.
+	if len(emitter.Yields) != 1 {
+		t.Errorf("child yields = %d, want exactly its own utterance", len(emitter.Yields))
+	}
+	// Exactly-one-withhold is pinned where the count lives: the guest's
+	// one-passage gate (koine.Passing, wire tests) and conduit-go's own
+	// broker tests; here the real boundary pins withheld=true + zero
+	// parent execution.
 }
 
 // TestCrossing_TheChainGuestLoadsIntoTheRealHost is koine-go#5's first
@@ -817,9 +855,10 @@ func TestCrossing_TheChainGuestLoadsIntoTheRealHost(t *testing.T) {
 }
 
 // TestCrossing_APassUpReachesTheBrokerAsAWellFormedExchange drives the whole
-// surface through the merged MemoryBroker. The broker knows nothing about
-// pass-ups — that is #210's job — so what is asserted is the shape of what
-// arrives and that the guest can read what comes back.
+// surface through the plain MemoryBroker, which knows nothing about
+// pass-ups. The REAL broker's semantics are covered by
+// TestCrossing_APassUpMeetsTheRealChainBroker above; this one pins the
+// SHAPE of what leaves the guest, independent of any coordinator.
 func TestCrossing_APassUpReachesTheBrokerAsAWellFormedExchange(t *testing.T) {
 	h, ctx := newHost(t)
 	station, err := h.Load(ctx, "chain-walker", buildGuest(t, "fixtures/guest/chain"))
@@ -997,10 +1036,10 @@ func TestCrossing_AParentBreachArrivesAsAValue(t *testing.T) {
 }
 
 // TestCrossing_ThePassUpSpellingsAreDeclaredInOnePlace guards the thing K2
-// taught. The reserved type strings exist in NEITHER repository's code — they
-// are a ticket agreement between koine-go#5 and conduit-go#210 and nothing
-// more. Pinning them here means the day conduit-go declares its own constant,
-// a disagreement is a failing test rather than a silent misroute.
+// taught. BOTH repositories now declare the reserved type strings —
+// conduit-go's ChainBroker (#211) routes on its own constants, this SDK on
+// wire.TypePassUp/TypeWithhold — and this test is the crossing that makes a
+// future disagreement a failing test rather than a silent misroute.
 func TestCrossing_ThePassUpSpellingsAreDeclaredInOnePlace(t *testing.T) {
 	if wire.TypePassUp != "koine.passup" {
 		t.Errorf("the pass-up type is %q; both tickets name koine.passup", wire.TypePassUp)
