@@ -91,12 +91,27 @@ type Lineage interface {
 	Withhold(Utterance)
 }
 
+var (
+	errEmptyParent         = errors.New("koine: function not implemented: this station has no parent")
+	emptyParent    Lineage = emptyLineage{}
+)
+
+type emptyLineage struct{}
+
+func (emptyLineage) PassUp(Utterance) Passage { return 0 }
+
+func (emptyLineage) AwaitPass(Passage) Conclusion {
+	return Conclusion{Outcome: Failure, Err: errEmptyParent}
+}
+
+func (emptyLineage) Withhold(Utterance) {}
+
 // PassUp hands the parent its object NOW and returns a Passage without
 // waiting. Everything the body does after this line runs while the parent
 // has already been handed the object — which is what makes "a bit of both"
 // a matter of where the line sits.
 func (b *Base) PassUp(u Utterance) Passage {
-	return b.lineage("PassUp").PassUp(u)
+	return b.lineage().PassUp(u)
 }
 
 // Await suspends until the parent's step concludes and hands back its
@@ -109,7 +124,7 @@ func (b *Base) PassUp(u Utterance) Passage {
 // is the engine's, and a guest that made up its own would be a guest arguing
 // with the calculus.
 func (b *Base) Await(p Passage) Conclusion {
-	return b.lineage("Await").AwaitPass(p)
+	return b.lineage().AwaitPass(p)
 }
 
 // Withhold suppresses the pass this station would otherwise make. It is the
@@ -117,20 +132,14 @@ func (b *Base) Await(p Passage) Conclusion {
 // suppress, and an outcome of failure does not suppress. Features are
 // opt-out, and opting out is written down.
 func (b *Base) Withhold(u Utterance) {
-	b.lineage("Withhold").Withhold(u)
+	b.lineage().Withhold(u)
 }
 
-// lineage answers the seam, or refuses loudly.
-//
-// A nil seam is a SHAPE mistake, not a host that could not answer, and it
-// traps so the record names the right party: whoever built this station
-// never constructed it, and a station that was never constructed has no
-// parent chain to reach. The two-outcomes rule cuts both ways — a stoppage
-// below the line must not be blamed on the author, and the author's own
-// shape mistake must not be dressed up as one.
-func (b *Base) lineage(verb string) Lineage {
+// lineage answers the host's seam, or the determinate empty parent when this
+// station stands at the root.
+func (b *Base) lineage() Lineage {
 	if b.ctx.lineage == nil {
-		panic("koine: " + verb + " reached for a parent chain on a station nobody constructed — this is a shape mistake in whoever built it, not a host that could not answer")
+		return emptyParent
 	}
 	return b.ctx.lineage
 }
